@@ -13,7 +13,7 @@
  * 
  */
 
-(function(global, factory){ 
+ (function(global, factory){ 
     global.module === undefined && 
     typeof global.module !== 'object' ? global.module = {exports : undefined} : {}, 
     global.require = global.require ? global.require : function(url){ var req = new this.XMLHttpRequest();
@@ -23,7 +23,7 @@
     return imported;}else return console.warn('require', 'Unable to located imports...');}else
     return warn('require', 'Unable to import target file...');}, global.Min = factory(global), 
     global.Min.version = '0.1.0';
-})(this, function(){
+})(this, function(global){
 
     /**
      * Similar to Function.prototype.bind,
@@ -183,7 +183,7 @@
      * Mixing of native methods and APIs
      */
     //watcherMixin(Min);
-    watcherMixin(Min);
+    reactiveMixin(Min);
     
     /**
      * A Reactive Object defines the value and attributes of
@@ -259,36 +259,60 @@
     }
 
     Reactive.prototype._bindListeners = function(){
+
         var $reactive = this.$min.$reactive;
+
         var listeners = this.listeners;
         for(var i in listeners){
+
             var $callerReactive = $reactive[listeners[i]];
             $callerReactive.callers.push(this.self);
+
         }
     }
 
+    /**
+     * This updates the current Reactive, gets invoked
+     * when the associated property gets changed or
+     * the callers updates this Reactive.
+     */
     Reactive.prototype._update = function(val){
+
         var $reactive = this.$min.$reactive;
         var callers = this.callers;
         var oldVal = this.oldVal;
+
         if(this.isCompute === true)
+            /**
+             * The compute function is assumed 
+             * to be binded to the current vm.
+             */
             val = this.compute.call();
         else if(isDef(val))
             this.val = val;
+        
         var $setter = this.$setter;
         for(var setter in $setter)
             $setter[setter].call(null, this.val, oldVal);
+        /**
+         * Update the old value to the new value,
+         * cloning of the new value separates the
+         * references of the old value with the
+         * new value.
+         */
         this.oldVal = deepClone(this.val);
+
         var listeners = this.listeners;
-        for(var i in listeners){
+        for(var i in listeners)
             $reactive[listeners[i]]._update();
-        }
+
         return oldVal;
+
     }
 
-    function watcherMixin(M){
+    function reactiveMixin(M){
 
-        Min.$mixin.watcher = {
+        Min.$mixin.reactive = {
 
             /**
              * This defines the new index that will 
