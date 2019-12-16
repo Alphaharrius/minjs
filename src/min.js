@@ -13,7 +13,7 @@
  * 
  */
 
- (function(global, factory){ 
+(function(global, factory){ 
     global.module === undefined && 
     typeof global.module !== 'object' ? global.module = {exports : undefined} : {}, 
     global.require = global.require ? global.require : function(url){ var req = new this.XMLHttpRequest();
@@ -23,7 +23,7 @@
     return imported;}else return console.warn('require', 'Unable to located imports...');}else
     return warn('require', 'Unable to import target file...');}, global.Min = factory(global), 
     global.Min.version = '0.1.0';
-})(this, function(global){
+})(this, function(){
 
     /**
      * Similar to Function.prototype.bind,
@@ -392,10 +392,7 @@
                     return $r.val;
                 },
                 set(v){
-                    /**
-                     * The old value is being returned.
-                     */
-                    return $r._update(v);
+                    $r._update(v);
                 }
             }
             Object.defineProperty(
