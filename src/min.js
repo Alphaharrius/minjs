@@ -288,7 +288,7 @@
 
     function watcherMixin(M){
 
-        Min.$mixin.reactive = {
+        Min.$mixin.watcher = {
 
             /**
              * This defines the new index that will 
