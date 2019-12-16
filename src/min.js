@@ -13,7 +13,7 @@
  * 
  */
 
- (function(global, factory){ 
+(function(global, factory){ 
     global.module === undefined && 
     typeof global.module !== 'object' ? global.module = {exports : undefined} : {}, 
     global.require = global.require ? global.require : function(url){ var req = new this.XMLHttpRequest();
@@ -23,7 +23,7 @@
     return imported;}else return console.warn('require', 'Unable to located imports...');}else
     return warn('require', 'Unable to import target file...');}, global.Min = factory(global), 
     global.Min.version = '0.1.0';
-})(this, function(global){
+})(this, function(){
 
     /**
      * Similar to Function.prototype.bind,
@@ -178,350 +178,241 @@
                 this[prop] = $[prop];
 
     }
-
-    /**
-     * Global API for checking the given key
-     * belongs to a defined watched property.
-     */
-
-    Min.prototype.hasProperty = function(key){
-
-        return isDef(this.$wpv[key]);
-
-    }
-
     
     /**
      * Mixing of native methods and APIs
      */
+    //watcherMixin(Min);
     watcherMixin(Min);
+    
+    /**
+     * A Reactive Object defines the value and attributes of
+     * a reactive property within the current vm, it also helds
+     * the linkage between reactive properties.
+     */
+    function Reactive($min, listeners, prop, val, compute){
+
+        /**
+         * The current vm.
+         */
+        this.$min = $min;
+
+        /**
+         * The Reactive index of this Reactive.
+         */
+        this.self = $min.reactiveIdx++;
+        /**
+         * The Reactive indexs of the callers
+         * that calls to this Reactive on change.
+         */
+        this.callers = [];
+        /**
+         * The Reactive Indexs of the listeners
+         * that is being called when this Reactive
+         * updates.
+         */
+        this.listeners = listeners;
+
+        /**
+         * Whether the associated property is a
+         * computed property.
+         */
+        this.isCompute = isDef(compute);
+
+        /**
+         * The associated property.
+         */
+        this.prop = prop;
+        /**
+         * The current value of the property,
+         * this will get changed when it's sub
+         * properties gets updated.
+         */
+        this.val = val;
+        /**
+         * The old value of the associated property,
+         * this will be updates after the setters of
+         * this Reactive is called on update.
+         */
+        this.oldVal = deepClone(val);
+        /**
+         * The compute function of the associated property,
+         * if the associated property is not a computed
+         * property, this will be undefined.
+         */
+        this.compute = compute;
+
+        /**
+         * The setters of this Reactive, gets invoked on update.
+         */
+        this.$setter = {};
+
+        /**
+         * Create linkage to other Reactives
+         */
+        this._bindListeners();
+        /**
+         * Add this Reactive to the current vm.
+         */
+        $min.$reactive[this.self] = this;
+
+    }
+
+    Reactive.prototype._bindListeners = function(){
+        var $reactive = this.$min.$reactive;
+        var listeners = this.listeners;
+        for(var i in listeners){
+            var $callerReactive = $reactive[listeners[i]];
+            $callerReactive.callers.push(this.self);
+        }
+    }
+
+    Reactive.prototype._update = function(val){
+        var $reactive = this.$min.$reactive;
+        var callers = this.callers;
+        var oldVal = this.oldVal;
+        if(this.isCompute === true)
+            val = this.compute.call();
+        else if(isDef(val))
+            this.val = val;
+        var $setter = this.$setter;
+        for(var setter in $setter)
+            $setter[setter].call(null, this.val, oldVal);
+        this.oldVal = deepClone(this.val);
+        var listeners = this.listeners;
+        for(var i in listeners){
+            $reactive[listeners[i]]._update();
+        }
+        return oldVal;
+    }
 
     function watcherMixin(M){
 
-        M.$mixin.watch = {
+        Min.$mixin.reactive = {
 
-            //The current computed value that is being
-            //initialized, this is used to add the computed
-            //property to the dependancies of related properties
-            wccp : undefined,
+            /**
+             * This defines the new index that will 
+             * be recieved by a new Reactive.
+             */
+            reactiveIdx : 0,
 
-            //Stores the functions of the computed properties
-            $wcp : {},
+            /**
+             * This defines the current compute type
+             * Reactive that is being initialized.
+             */
+            $curComReactive : undefined,
 
-            $wpv : {},
+            /**
+             * This defines the most recent accessed Reactive.
+             */
+            $curReactive : undefined,
 
-            //Stores the dependant computed properties of each property
-            $wpd : {},
-
-            //Stores the setters of the watched properties
-            $wset : {}
+            /**
+             * This stores the Reactive Objects within current vm.
+             */
+            $reactive : {}
 
         }
 
         /**
-         * This function will define a reactive
-         * property to an object type, and create
-         * definitions of neccessaries within the
-         * base Min Object. By using this function 
-         * we need to bind it to the current Min.
+         * This util function allows to retrieve a Reactive by the 
+         * reference given in the argument, for the argument should 
+         * be in form of: [STR].[STR].[STR].[...], the same applies
+         * to array type objects: [ARR].[INT].[INT].[...]. This 
+         * function does not have protection against undefined
+         * references, if the Reactive is not found.
          */
-        
-        function defineReactive($min, $object, prop, val, ref){
+        M.prototype._getReactive = function(ref){
+            var props = ref.split('.');
+            if(props.length > 1){
+                var $ = this;
+                for(var i in props){
+                    $[props[i]];
+                    $ = $[props[i]];
+                }
+            }else this[ref];
+            var $reactive = this.$curReactive;
+            this.$curReactive = undefined;
+            return $reactive;
+        }
 
-            var $wpv = $min.$wpv;
-            var $wset = $min.$wset;
-            var $wpd = $min.$wpd;
-            var $wcp = $min.$wcp;
-
-            var $set = $wset[ref] = {};
-            var $dep = $wpd[ref] = {};
-
-            $wpv[ref] = val;
-
-            var $initDef = {
+        /**
+         * Define a reactive property to an Object type within
+         * the current vm, the Reactive Object of the property
+         * must be defined before using this function.
+         */
+        function define($min, $o, p, $r){
+            /**
+             * Predefines the parameters of Object.defineProperty
+             * to reduce code complexity.
+             */
+            var $i = {
                 enumerable : true,
                 configurable : true,
-                set : function(nv){
-
-                    var ov = $wpv[ref];
-                    $wpv[ref] = nv;
-
-                    for(var setter in $set)
-                        $set[setter].call($min, ov, nv);
-
-                    for(var dep in $dep)
-                        $wpv[dep] = $wcp[dep].call();
-
-                    return ov;
-
+                get(){
+                    /**
+                     * Getter is called when the property is accessed
+                     * in any ways, it is for sure that if the current
+                     * computed Reactive is defined, it depends on this
+                     * Reactive.
+                     */
+                    var $curComReactive = $min.$curComReactive;
+                    if(isDef($curComReactive)){
+                        $curComReactive.callers.push($r.self);
+                        $r.listeners.push($curComReactive.self);
+                    }
+                    /**
+                     * Set the recent Reactive be this.
+                     */
+                    $min.$curReactive = $r;
+                    return $r.val;
                 },
-                get : function(){
-
-                    var wccp = $min.wccp;
-
-                    if(isDef(wccp) && isUnDef($dep[wccp]))
-                        $dep[wccp] = true;
-
-                    return $wpv[ref];
-
+                set(v){
+                    /**
+                     * The old value is being returned.
+                     */
+                    return $r._update(v);
                 }
             }
-
             Object.defineProperty(
-                $object,
-                prop,
-                $initDef
+                $o,
+                p,
+                $i
             );
 
         }
 
-        function isSubPropertyOf(prop, ref){
-
-            var props = prop.split('.');
-            var refs = ref.split('.');
-
-            for(var i in props)
-                if(props[i] !== refs[i])
-                    return false;
-            return true;
-
-        }
-
-        var mixinObjects = [
-
-            '$wcp',
-            '$wpv',
-            '$wpd',
-            '$wset'
-
-        ];
-
-        /**
-         * This function will remove all neccessaries
-         * relates to the property, such as reference
-         * 'a.b.c' and 'a.d' will be removed when 'a'
-         * is being deleted.
-         */
-        function deleteReactive($min, prop){
-
-            for(var i in mixinObjects){
-
-                var $mixin = $min[mixinObjects[i]];
-
-                for(var ref in $mixin)
-                    if(isSubPropertyOf(prop, ref))
-                        delete $mixin[ref];
-
-            }
-
-        }
-
-        function deep($min, $object, ref){
-
+        function deep($min, $object, $superReactive){
             if(!isObject($object))
                 return;
-
-            if(Array.isArray($object))
-                reactiveArray($min, ref, $object);
-
-            for(var pp in $object){
-                var $val = $object[pp];
-                if(isFunction($val)) continue;
-                var cref = ref + '.' + pp;
-                defineReactive($min, $object, pp, $val, cref);
-                deep($val, cref);
+            for(var p in $object){
+                var $val = $object[p];
+                var $reactive = new Reactive($min, [$superReactive.self], p, $val);
+                define($min, $object, p, $reactive);
+                deep($min, $val, $reactive);
             }
-
-        }
-
-        function reactiveArray($min, ref, arr){
-
-            var proto = Array.prototype;
-
-            var _push = proto.push;
-            var _pop = proto.pop;
-
-            Object.defineProperties(arr, {
-                push : {
-                    enumerable : false,
-                    configurable : true,
-                    value : function(val){
-
-                        var r = _push.call(this, val);
-        
-                        var idx = r - 1;
-                        var cref = ref + '.' + idx
-                        defineReactive($min, this, idx, val, cref);
-                        deep($min, this[idx], cref);
-        
-                        return r;
-        
-                    }
-                },
-                pop : {
-                    enumerable : false,
-                    configurable : true,
-                    value : function(){
-
-                        var r = _pop.call(this);
-        
-                        var idx = this.length;
-                        var cref = ref + '.' + idx;
-                        deleteReactive($min, cref);
-        
-                        return r;
-        
-                    }
-                }
-            });
-
         }
 
         M.prototype.$set = function(prop, val){
-
-            /**
-             * Prevents repeative definition, even if it
-             * is safe to do so.
-             */
-
-            if(this.hasProperty(prop))
-                return error('This property was defined.');
-
-            var $wpv = this.$wpv;
-
-            /**
-             * Define the reactive property into the Min Object,
-             */
-
-            defineReactive(this, this, prop, val, prop);
-
-            deep(this, this[prop], prop);
-
+            var $reactive = new Reactive(this, [], prop, val);
+            define(this, this, prop, $reactive);
+            if(!isObject(val)) return;
+            deep(this, this[prop], $reactive);
         }
 
         M.prototype.$compute = function(prop, comp){
-
-            if(this.hasProperty(prop))
-                return error('This property was defined.');
-
             comp = comp.bind(this);
-
-            this.wccp = prop;
+            var $reactive = new Reactive(this, [], prop, undefined, comp);
+            define(this, this, prop, $reactive);
+            this.$curComReactive = $reactive;
             var val = comp.call();
-            this.wccp = undefined;
-
-            this.$wcp[prop] = comp;
-
-            defineReactive(this, this, prop, val, prop);
-
+            this.$curComReactive = undefined;
+            $reactive.val = val;
         }
 
-        /**
-         * Helper function for inserting a setter to
-         * a reference in the current Min
-         */
-
-        function injectSetter($min, ref, key, setter){
-
-            $min.$wset[ref][key] = setter;
-
-        }
-
-        function getSplitRef(ref){
-
-            var self = '';
-
-            var i = ref.length - 1; for(; i >= 0; i--){
-                var char = ref[i];
-                if(char === '.') break;
-                self = char + self;
-            }
-
-            return [i >= 0 ? ref.slice(0, i) : undefined, self];
-
-        }
-
-        function genRootSetter($min, ref){
-
-            var splitRef = getSplitRef(ref);
-            var immediateRoot = splitRef[0];
-            if(isUnDef(immediateRoot))
-                return undefined;
-            
-            var self = splitRef[1];
-            var $rootSet = $min.$wset[immediateRoot];
-
-            return function(ov){
-
-                var $rootVal = $min.$wpv[immediateRoot];
-                var $oldRootVal = deepClone($rootVal);
-                $oldRootVal[self] = ov;
-
-                for(var setter in $rootSet)
-                    $rootSet[setter].call($min, $oldRootVal, $rootVal);
-
-            }
-
-        }
-
-        M.prototype.$watch = function(ref, watchSetter, deep){
-
-            var $wset = this.$wset;
-            
-            if(deep === true)
-                for(var key in $wset){
-
-                    if(!isSubPropertyOf(ref, key))
-                        continue;
-
-                    if(isDef($wset[key].root)){
-                        upush($wset[key].root.to, ref);
-                        continue;
-                    }
-
-                    var rootSetter = genRootSetter(this, key);
-                    
-
-                    if(isUnDef(rootSetter))
-                        continue;
-
-                    var to = rootSetter.to = [];
-                    upush(to, ref);
-
-                    injectSetter(this, key, 'root', rootSetter);
-
-                }
-
-            injectSetter(this, ref, 'watch', watchSetter);
-
-        }
-
-        M.prototype.$unwatch = function(ref){
-
-            var $wset = this.$wset;
-            var $set = $wset[ref];
-
-            if(isDef($set.watch))
-                delete $set.watch;
-
-            for(var pp in $wset)
-                if(isSubPropertyOf(ref, pp)){
-
-                    $set = $wset[pp];
-                    var rootSetter = $set.root;
-                    if(isUnDef(rootSetter))
-                        continue;
-
-                    var to = rootSetter.to;
-                    var idxRef = to.indexOf(ref);
-                    if(idxRef === 0 && to.length === 1){
-                        delete $set.root;
-                        continue;
-                    }
-                    to.splice(idxRef, 1);
-
-                }
-
+        M.prototype.$watch = function(ref, handler){
+            var $reactive = this._getReactive(ref);
+            $reactive.$setter.watch = handler;
         }
 
     }
@@ -577,8 +468,6 @@
         }
 
     }
-
-    
 
     return Min;
 
