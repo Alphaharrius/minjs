@@ -11,6 +11,10 @@
  * - two way data binding
  * - reactive content
  * 
+ * The library header included a require function for 
+ * importing external library into the current window,
+ * this can be removed if Babel/Webpack/ES6 is avaliable.
+ * 
  */
 
 (function(global, factory){ 
@@ -19,8 +23,8 @@
     global.require = global.require ? global.require : function(url){ var req = new this.XMLHttpRequest();
     req.open('GET', url, false); req.send(null); if(req.status === 200){try{this.eval(req.responseText);}
     catch(e){return warn('require', 'Failed to import, ' + e);} var imported = this.module.exports;
-    this.module.exports = undefined; if(imported !== undefined){ console.log('$import', 'From "' + url + '"');
-    return imported;}else return console.warn('require', 'Unable to located imports...');}else
+    this.module.exports = undefined; if(imported !== undefined){ console.log('$import', 'From "' + url 
+    + '"'); return imported;}else return console.warn('require', 'Unable to located imports...');}else
     return warn('require', 'Unable to import target file...');}, global.Min = factory(global), 
     global.Min.version = '0.1.0';
 })(this, function(){
@@ -30,7 +34,6 @@
      * when this will not affect the 'this'
      * value binded to this function.
      */
-
      Function.prototype.pass = function(){
         var args = arguments;
         var func = this;
@@ -77,7 +80,6 @@
     /**
      * Only the first match will be removed
      */
-    
     function remove(arr, val) {
         if (arr.length) {
             var index = arr.indexOf(val);
@@ -98,7 +100,6 @@
      * change, the element order of array type will not
      * be affected, thus it is safe to use.
      */
-    
     function deepClone($object){
         if(!isObject($object))
             return $object;
@@ -122,7 +123,6 @@
      * Check if the given prop is a computed prop
      * which normally not start with 'on'
      */
-    
     function isComProp(prop){
         return prop[0] !== 'o' || prop[1] !=='n';
     }
@@ -160,14 +160,12 @@
      * mixin objects, every Min Object will
      * inherit a set of properties.
      */
-    
     Min.$mixin = {};
     
     /**
      * Global API for injecting properties
      * into the Min Object.
      */
-    
     Min.prototype._extend = function($){
 
         if(!isObject($))
@@ -182,7 +180,6 @@
     /**
      * Mixing of native methods and APIs
      */
-    //watcherMixin(Min);
     watcherMixin(Min);
     
     /**
@@ -288,8 +285,9 @@
              * to be binded to the current vm.
              */
             val = this.compute.call();
-        else if(isDef(val))
+        if(isDef(val))
             this.val = val;
+
         
         var $setter = this.$setter;
         for(var setter in $setter)
@@ -319,12 +317,6 @@
              * be recieved by a new Reactive.
              */
             reactiveIdx : 0,
-
-            /**
-             * This defines the current compute type
-             * Reactive that is being initialized.
-             */
-            $curComReactive : undefined,
 
             /**
              * This defines the most recent accessed Reactive.
@@ -375,17 +367,6 @@
                 configurable : true,
                 get(){
                     /**
-                     * Getter is called when the property is accessed
-                     * in any ways, it is for sure that if the current
-                     * computed Reactive is defined, it depends on this
-                     * Reactive.
-                     */
-                    var $curComReactive = $min.$curComReactive;
-                    if(isDef($curComReactive)){
-                        $curComReactive.callers.push($r.self);
-                        $r.listeners.push($curComReactive.self);
-                    }
-                    /**
                      * Set the recent Reactive be this.
                      */
                     $min.$curReactive = $r;
@@ -421,13 +402,152 @@
             deep(this, this[prop], $reactive);
         }
 
+        /**
+         * Processing of compute functions to fetch
+         * the associated dependent Reactives.
+         */
+        
+        /**
+         * This function scans the function string
+         * and extract all references that begins
+         * with the this keyword without duplicates.
+         */
+        function rawRefsFromStr(str){
+
+            var thisKeyword = 'this.';
+        
+            var stopChars = [
+                '\t', ' ', '(', ')', '{', '}',
+                '+', '-', '*', '/', '<', '>', '=',
+                '!', '@', '#', '%', '^', '&', '|',
+                '?', ':', '\'', '\"', ';'
+            ];
+        
+            function isStopChar(char){
+                for(var i in stopChars)
+                    if(char === stopChars[i])
+                        return true;
+                return false;
+            }
+        
+            var raws = [];
+            var len = str.length;
+            var i = 0; for(; i < len; i++){
+                
+                var cont = true;
+                var c = 0; for(; c < 5; c++)
+                    if(str[i + c] !== thisKeyword[c])
+                        cont = false;
+                if(cont === false)
+                    continue;
+        
+                var raw = '';
+                var m = c, char = ''; 
+                while(isStopChar(char) === false && i + m < len){
+                    raw += char;
+                    char = str[i + m++];
+                }
+                if(raws.indexOf(raw) === -1)
+                    raws.push(raw);
+                
+                if(i + c < len)
+                    i += c;
+                else
+                    break;
+            }
+        
+            return raws;
+        
+        }
+        
+        /**
+         * This function converts a javascript
+         * expressions of array references into
+         * vm readable reference.
+         */
+        function rawRefToRef(raw){
+        
+            if(
+                raw.indexOf('[') === -1 && 
+                raw.indexOf(']') === -1
+            ) return raw;
+        
+            var ref = '';
+            for(var i in raw){
+                var char = raw[i];
+                if(char === ']')
+                    continue;
+                if(char === '['){
+                    ref += '.';
+                    continue;
+                }
+                ref += char;
+            }
+            return ref;
+        
+        }
+
+        /**
+         * This function removes the last
+         * element from the reference.
+         */
+        function removeLastFromRef(ref){
+
+            if(ref.indexOf('.') === -1)
+                return undefined;
+            
+            var splits = ref.split('.');
+            var newRef = splits[0], len = splits.length - 1;
+            for(var i = 1; i < len; i++)
+                newRef += '.' + splits[i];
+            
+            return newRef;
+        
+        }
+        
+        /**
+         * This function fetch all associated 
+         * Reactives of the properties found 
+         * within a function string.
+         */
+        function reactivesFromStr($min, str){
+        
+            var raws = rawRefsFromStr(str);
+            var $refReactive = {};
+            for(var i in raws){
+                var ref = rawRefToRef(raws[i]);
+                var $reactive = $min._getReactive(ref);
+                while(isUnDef($reactive)){
+                    ref = removeLastFromRef(ref);
+                    if(isUnDef(ref)) break;
+                    $reactive = $min._getReactive(ref);
+                }
+                if(isUnDef($reactive))
+                    return error(
+                        'Unable to proceed, unidentified property ' +
+                        'in the compute function...'
+                    );
+                $refReactive[ref] = $reactive;
+            }
+
+            return $refReactive;
+        
+        }
+
         M.prototype.$compute = function(prop, comp){
+            var compStr = comp.toString();
             comp = comp.bind(this);
             var $reactive = new Reactive(this, [], prop, undefined, comp);
             define(this, this, prop, $reactive);
-            this.$curComReactive = $reactive;
+            
+            var $callerReactive = reactivesFromStr(this, compStr);
+            for(var ref in $callerReactive){
+                $currentReactive = $callerReactive[ref];
+                $currentReactive.listeners.push($reactive.self);
+                $reactive.callers.push($currentReactive.self);
+            }
+
             var val = comp.call();
-            this.$curComReactive = undefined;
             $reactive.val = val;
         }
 
