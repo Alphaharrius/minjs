@@ -183,7 +183,7 @@
      * Mixing of native methods and APIs
      */
     //watcherMixin(Min);
-    reactiveMixin(Min);
+    watcherMixin(Min);
     
     /**
      * A Reactive Object defines the value and attributes of
@@ -310,9 +310,9 @@
 
     }
 
-    function reactiveMixin(M){
+    function watcherMixin(M){
 
-        Min.$mixin.reactive = {
+        Min.$mixin.watcher = {
 
             /**
              * This defines the new index that will 
