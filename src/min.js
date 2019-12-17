@@ -339,17 +339,20 @@
          * references, if the Reactive is not found.
          */
         M.prototype._reactiveFromRef = function(ref){
+
             var props = ref.split('.');
             if(props.length > 1){
                 var $ = this;
-                for(var i in props){
-                    $[props[i]];
+                for(var i in props)
+                    $[props[i]],
                     $ = $[props[i]];
-                }
             }else this[ref];
+
             var $reactive = this.$curReactive;
             this.$curReactive = undefined;
+
             return $reactive;
+
         }
 
         /**
@@ -358,6 +361,10 @@
          * must be defined before using this function.
          */
         function define($min, $o, p, $r){
+
+            if($r.prop != p)
+                $r.prop = p;
+
             /**
              * Predefines the parameters of Object.defineProperty
              * to reduce code complexity.
@@ -376,6 +383,7 @@
                     $r._update(v);
                 }
             }
+
             Object.defineProperty(
                 $o,
                 p,
@@ -384,9 +392,150 @@
 
         }
 
+        function patchArray($min, arr, $arrReactive){
+
+            var proto = Array.prototype;
+
+            var _push = proto.push;
+            var $push = {
+                enumerable : false,
+                configurable : true,
+                value(val){
+
+                    var idx = _push.call(this, undefined) - 1;
+                    var $reactive = new Reactive($min, [$arrReactive.self], idx, val);
+                    define($min, arr, idx, $reactive);
+
+                    if(isObject(val))
+                        deep($min, this[idx], $reactive);
+                    
+                    $arrReactive._update();
+
+                    return idx;
+
+                }
+            }
+
+            /**
+             * Helper to get the Reactive of a indexed
+             * element of the array.
+             */
+            var $reactive = $min.$reactive;
+            function reactiveIdxFromIdx(idx){
+                var callers = $arrReactive.callers;
+                for(var i in callers){
+                    $callerReactive = $reactive[callers[i]];
+                    if($callerReactive.prop == idx)
+                        return $callerReactive.self;
+                }
+            }
+
+            /**
+             * Helper to remove a Reactive and it's associated
+             * sub Reactives completely from the vm and array.
+             */
+            function removeReactive(idx){
+                var reactive = reactiveIdxFromIdx(idx);
+                var callers = $reactive[reactive].callers;
+                for(var i in callers)
+                    delete $reactive[callers[i]];
+                delete $reactive[reactive];
+                return reactive;
+            }
+
+
+            var _pop = proto.pop;
+            var $pop = {
+                enumerable : false,
+                configurable : true,
+                value(){
+
+                    var ret = _pop.call(this);
+                    if(isUnDef(ret))
+                        return;
+
+                    var reactive = removeReactive(this.length);
+                    remove($arrReactive.callers, reactive);
+                    $arrReactive._update();
+
+                    return ret;
+
+                }
+            }
+
+            var _shift = proto.shift;
+            var $shift = {
+                enumerable : false,
+                configurable : true,
+                value(){
+
+                    var reactives = [];
+                    for(var i = 0, len = this.length; i < len; i++){
+                        var reactive = reactiveIdxFromIdx(i);
+                        if(i != 0)
+                            delete this[i],
+                            reactives.push(reactive);
+                    }
+
+                    reactive = removeReactive(0);
+                    var ret = _shift.call(this);
+                    for(var i in reactives)
+                        define($min, arr, i, $reactive[reactives[i]]);
+
+                    remove($arrReactive.callers, reactive);
+                    $arrReactive._update();
+
+                    return ret;
+                    
+                }
+            }
+
+            var _unshift = proto.unshift;
+            var $unshift = {
+                enumerable : false,
+                configurable : true,
+                value(val){
+
+                    var reactives = [];
+                    for(var i = 0, len = this.length; i < len; i++){
+                        delete this[i],
+                        reactives.push(reactiveIdxFromIdx(i));
+                    }
+
+                    var $newReactive = new Reactive($min, [$arrReactive.self], 0, val);
+                    var ret = _unshift.call(this, undefined);
+                    define($min, this, 0, $newReactive);
+
+                    if(isObject(val))
+                        deep($min, this[0], $newReactive);
+                        
+                    for(var i = 1, len = this.length; i < len; i++){
+                        var $idxReactive = $reactive[reactives[i - 1]];
+                        $idxReactive.prop = i;
+                        define($min, this, i, $idxReactive);
+                    }
+
+                    $arrReactive._update();
+
+                    return ret;
+
+                }
+            }
+
+            Object.defineProperties(arr, {
+                push : $push,
+                pop : $pop,
+                shift : $shift,
+                unshift : $unshift
+            });
+
+        }
+
         function deep($min, $object, $superReactive){
             if(!isObject($object))
                 return;
+            if(Array.isArray($object))
+                patchArray($min, $object, $superReactive);
             for(var p in $object){
                 var $val = $object[p];
                 var $reactive = new Reactive($min, [$superReactive.self], p, $val);
