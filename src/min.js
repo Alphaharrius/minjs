@@ -182,131 +182,6 @@
      */
     watcherMixin(Min);
     eventMixin(Min);
-    
-    /**
-     * A Reactive Object defines the value and attributes of
-     * a reactive property within the current vm, it also helds
-     * the linkage between reactive properties.
-     */
-    function Reactive($min, listeners, prop, val, compute){
-
-        /**
-         * The current vm.
-         */
-        this.$min = $min;
-
-        /**
-         * The Reactive index of this Reactive.
-         */
-        this.self = $min.reactiveIdx++;
-        /**
-         * The Reactive indexs of the callers
-         * that calls to this Reactive on change.
-         */
-        this.callers = [];
-        /**
-         * The Reactive Indexs of the listeners
-         * that is being called when this Reactive
-         * updates.
-         */
-        this.listeners = listeners;
-
-        /**
-         * Whether the associated property is a
-         * computed property.
-         */
-        this.isCompute = isDef(compute);
-
-        /**
-         * The associated property.
-         */
-        this.prop = prop;
-        /**
-         * The current value of the property,
-         * this will get changed when it's sub
-         * properties gets updated.
-         */
-        this.val = val;
-        /**
-         * The old value of the associated property,
-         * this will be updates after the setters of
-         * this Reactive is called on update.
-         */
-        this.oldVal = deepClone(val);
-        /**
-         * The compute function of the associated property,
-         * if the associated property is not a computed
-         * property, this will be undefined.
-         */
-        this.compute = compute;
-
-        /**
-         * The setters of this Reactive, gets invoked on update.
-         */
-        this.$setter = {};
-
-        /**
-         * Create linkage to other Reactives
-         */
-        this._bindListeners();
-        /**
-         * Add this Reactive to the current vm.
-         */
-        $min.$reactive[this.self] = this;
-
-    }
-
-    Reactive.prototype._bindListeners = function(){
-
-        var $reactive = this.$min.$reactive;
-
-        var listeners = this.listeners;
-        for(var i in listeners){
-
-            var $callerReactive = $reactive[listeners[i]];
-            $callerReactive.callers.push(this.self);
-
-        }
-    }
-
-    /**
-     * This updates the current Reactive, gets invoked
-     * when the associated property gets changed or
-     * the callers updates this Reactive.
-     */
-    Reactive.prototype._update = function(val){
-
-        var $reactive = this.$min.$reactive;
-        var oldVal = this.oldVal;
-
-        if(this.isCompute === true)
-            /**
-             * The compute function is assumed 
-             * to be binded to the current vm.
-             */
-            val = this.compute.call();
-        if(isDef(val))
-            this.val = val;
-
-        
-        var $setter = this.$setter;
-        for(var setter in $setter)
-            $setter[setter].call(null, this.val, oldVal);
-        /**
-         * Update the old value to the new value,
-         * cloning of the new value separates the
-         * references of the old value with the
-         * new value.
-         */
-        this.oldVal = deepClone(this.val);
-
-        var listeners = this.listeners;
-        for(var i in listeners)
-            $reactive[listeners[i]]._update();
-
-        return oldVal;
-
-    }
 
     function watcherMixin(M){
 
@@ -326,7 +201,12 @@
             /**
              * This stores the Reactive Objects within current vm.
              */
-            $reactive : {}
+            $reactiveCollection : {},
+
+            /**
+             * This stores the root Reactives
+             */
+            rootReactives : []
 
         }
 
@@ -352,6 +232,221 @@
             this.$curReactive = undefined;
 
             return $reactive;
+
+        }
+
+        /**
+         * Watcher Mark and Sweep Garbage Collection
+         * This API allow the removal of unused Reactives
+         * when a reference to a property is deleted.
+         */
+
+        /**
+         * This mark algorithm is based on the callers of
+         * the Reactive, as each value update to the Reactive
+         * will flush the callers, Reactives that is unreachable
+         * will not be added to the life Reactive collection.
+         */
+        function markLifeReactives($reactiveCollection, $currentReactive, $lifeReactiveCollection){
+
+            $lifeReactiveCollection[$currentReactive.self] = true;
+            var callers = $currentReactive.callers;
+            for(var i in callers){
+                var reactive = callers[i];
+                markLifeReactives($reactiveCollection, $reactiveCollection[reactive], $lifeReactiveCollection);
+            }
+
+        }
+
+        /**
+         * All Reactives that is not in the life Reactive Collection
+         * will be removed from the current Reactive Collection.
+         */
+        function sweepReactiveCollection($reactiveCollection, $lifeReactiveCollection){
+
+            var sweeped = 0;
+
+            for(var reactive in $reactiveCollection)
+                if(isUnDef($lifeReactiveCollection[reactive]))
+                    delete $reactiveCollection[reactive], sweeped++;
+
+            return sweeped;
+
+        }
+
+        /**
+         * This function will be called automatically after a number
+         * of changes made to the Reactive Collection, but it can be
+         * used manually to force a garbage collection.
+         */
+        M.prototype._watcherMASGC = function(){
+
+            var $reactiveCollection = this.$reactiveCollection;
+            var $lifeReactiveCollection = {};
+
+            var rootReactives = this.rootReactives;
+            for(var i in rootReactives)
+                markLifeReactives($reactiveCollection, rootReactives[i], $lifeReactiveCollection);
+
+            var sweeped = sweepReactiveCollection($reactiveCollection, $lifeReactiveCollection);
+
+            log('watcherMASGC', 'Sweeped ' + sweeped + ' unused reactives.');
+
+        }
+
+        /**
+         * A Reactive Object defines the value and attributes of
+         * a reactive property within the current vm, it also helds
+         * the linkage between reactive properties.
+         */
+        function Reactive($min, listeners, prop, val, compute){
+
+            /**
+            * The current vm.
+            */
+            this.$min = $min;
+
+            /**
+            * The Reactive index of this Reactive.
+            */
+            this.self = $min.reactiveIdx++;
+            /**
+            * The Reactive indexs of the callers
+            * that calls to this Reactive on change.
+            */
+            this.callers = [];
+            /**
+            * The Reactive Indexs of the listeners
+            * that is being called when this Reactive
+            * updates.
+            */
+            this.listeners = listeners;
+
+            /**
+            * Whether the associated property is a
+            * computed property.
+            */
+            this.isCompute = isDef(compute);
+
+            /**
+            * Whether this Reactive belongs to an Object
+            */
+            this.isObject = isObject(val);
+
+            /**
+            * The associated property.
+            */
+            this.prop = prop;
+            /**
+            * The current value of the property,
+            * this will get changed when it's sub
+            * properties gets updated.
+            */
+            this.val = val;
+            /**
+            * The old value of the associated property,
+            * this will be updates after the setters of
+            * this Reactive is called on update.
+            */
+            this.oldVal = deepClone(val);
+            /**
+            * The compute function of the associated property,
+            * if the associated property is not a computed
+            * property, this will be undefined.
+            */
+            this.compute = compute;
+
+            /**
+            * The setters of this Reactive, gets invoked on update.
+            */
+            this.$setter = {};
+
+            /**
+            * Create linkage to other Reactives
+            */
+            this._bindListeners();
+            /**
+            * Add this Reactive to the current vm.
+            */
+            $min.$reactiveCollection[this.self] = this;
+
+        }
+
+        Reactive.prototype._bindListeners = function(){
+
+            var $reactiveCollection = this.$min.$reactiveCollection;
+
+            var listeners = this.listeners;
+            for(var i in listeners){
+
+                var $callerReactive = $reactiveCollection[listeners[i]];
+                $callerReactive.callers.push(this.self);
+
+            }
+        }
+
+        /**
+        * This updates the current Reactive, gets invoked
+        * when the associated property gets changed or
+        * the callers updates this Reactive.
+        */
+        Reactive.prototype._update = function(val){
+
+            var $reactiveCollection = this.$min.$reactiveCollection;
+            var oldVal = this.oldVal;
+
+            if(this.isCompute === true)
+                /**
+                * The compute function is assumed 
+                * to be binded to the current vm.
+                */
+                val = this.compute.call();
+
+            if(isDef(val)){
+                this.val = val;
+                if(this.isObject === true){
+
+                    /**
+                     * This releases the linkage in one direction
+                     * from the listener to the caller Reactive,
+                     * this ensures the caller Reactive being
+                     * garbage collected in garbage collection.
+                     */
+                    var callers = this.callers;
+                    var newCallers = [];
+                    for(var i in callers){
+                        var $callerReactive = $reactiveCollection[callers[i]];
+                        /**
+                         * Computed Property will not be unlinked
+                         * in this process as they are not in the
+                         * property sub tree.
+                         */
+                        if($callerReactive.isCompute === true)
+                            newCallers.push(callers[i]);
+                    }
+                    this.callers = newCallers;
+
+                    deep(this.$min, val, this);
+                }
+                this.isObject = isObject(val);
+            }
+            
+            var $setter = this.$setter;
+            for(var setter in $setter)
+                $setter[setter].call(null, this.val, oldVal);
+            /**
+            * Update the old value to the new value,
+            * cloning of the new value separates the
+            * references of the old value with the
+            * new value.
+            */
+            this.oldVal = deepClone(this.val);
+
+            var listeners = this.listeners;
+            for(var i in listeners)
+                $reactiveCollection[listeners[i]]._update();
+
+            return oldVal;
 
         }
 
@@ -420,11 +515,11 @@
              * Helper to get the Reactive of a indexed
              * element of the array.
              */
-            var $reactive = $min.$reactive;
+            var $reactiveCollection = $min.$reactiveCollection;
             function reactiveIdxFromIdx(idx){
                 var callers = $arrReactive.callers;
                 for(var i in callers){
-                    $callerReactive = $reactive[callers[i]];
+                    $callerReactive = $reactiveCollection[callers[i]];
                     if($callerReactive.prop == idx)
                         return $callerReactive.self;
                 }
@@ -436,10 +531,10 @@
              */
             function removeReactive(idx){
                 var reactive = reactiveIdxFromIdx(idx);
-                var callers = $reactive[reactive].callers;
+                var callers = $reactiveCollection[reactive].callers;
                 for(var i in callers)
-                    delete $reactive[callers[i]];
-                delete $reactive[reactive];
+                    delete $reactiveCollection[callers[i]];
+                delete $reactiveCollection[reactive];
                 return reactive;
             }
 
@@ -480,7 +575,7 @@
                     reactive = removeReactive(0);
                     var ret = _shift.call(this);
                     for(var i in reactives)
-                        define($min, arr, i, $reactive[reactives[i]]);
+                        define($min, arr, i, $reactiveCollection[reactives[i]]);
 
                     remove($arrReactive.callers, reactive);
                     $arrReactive._update();
@@ -510,7 +605,7 @@
                         deep($min, this[0], $newReactive);
                         
                     for(var i = 1, len = this.length; i < len; i++){
-                        var $idxReactive = $reactive[reactives[i - 1]];
+                        var $idxReactive = $reactiveCollection[reactives[i - 1]];
                         $idxReactive.prop = i;
                         define($min, this, i, $idxReactive);
                     }
@@ -550,6 +645,7 @@
                 return error('The given params is undefined/invalid.');
 
             var $reactive = new Reactive(this, [], prop, val);
+            this.rootReactives.push($reactive);
             define(this, this, prop, $reactive);
             if(!isObject(val)) return;
             deep(this, this[prop], $reactive);
