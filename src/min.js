@@ -477,8 +477,8 @@
                 if(raws.indexOf(raw) === -1)
                     raws.push(raw);
                 
-                if(i + c < len)
-                    i += c;
+                if(i + m < len)
+                    i += m - 1;
                 else
                     break;
             }
