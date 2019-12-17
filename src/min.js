@@ -183,11 +183,11 @@
     watcherMixin(Min);
     eventMixin(Min);
 
-        /**
-         * A Reactive Object defines the value and attributes of
-         * a reactive property within the current vm, it also helds
-         * the linkage between reactive properties.
-         */
+    /**
+     * A Reactive Object defines the value and attributes of
+     * a reactive property within the current vm, it also helds
+     * the linkage between reactive properties.
+     */
     function Reactive($min, listeners, prop, val, compute){
 
         /**
