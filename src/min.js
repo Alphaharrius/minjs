@@ -544,7 +544,7 @@
             }
         }
 
-        M.prototype.$set = function(prop, val){
+        M.prototype.$data = function(prop, val){
 
             if(isUnDef(prop) || isUnDef(val) || isFunction(val))
                 return error('The given params is undefined/invalid.');
