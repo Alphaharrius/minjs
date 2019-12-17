@@ -181,6 +181,7 @@
      * Mixing of native methods and APIs
      */
     watcherMixin(Min);
+    eventMixin(Min);
     
     /**
      * A Reactive Object defines the value and attributes of
@@ -276,7 +277,6 @@
     Reactive.prototype._update = function(val){
 
         var $reactive = this.$min.$reactive;
-        var callers = this.callers;
         var oldVal = this.oldVal;
 
         if(this.isCompute === true)
@@ -338,7 +338,7 @@
          * function does not have protection against undefined
          * references, if the Reactive is not found.
          */
-        M.prototype._getReactive = function(ref){
+        M.prototype._reactiveFromRef = function(ref){
             var props = ref.split('.');
             if(props.length > 1){
                 var $ = this;
@@ -396,16 +396,39 @@
         }
 
         M.prototype.$set = function(prop, val){
+
+            if(isUnDef(prop) || isUnDef(val) || isFunction(val))
+                return error('The given params is undefined/invalid.');
+
             var $reactive = new Reactive(this, [], prop, val);
             define(this, this, prop, $reactive);
             if(!isObject(val)) return;
             deep(this, this[prop], $reactive);
+
         }
 
         /**
          * Processing of compute functions to fetch
          * the associated dependent Reactives.
          */
+
+        /**
+         * This function removes the last
+         * element from the reference.
+         */
+        function removeLastFromRef(ref){
+
+            if(ref.indexOf('.') === -1)
+                return undefined;
+            
+            var splits = ref.split('.');
+            var newRef = splits[0], len = splits.length - 1;
+            for(var i = 1; i < len; i++)
+                newRef += '.' + splits[i];
+            
+            return newRef;
+        
+        }
         
         /**
          * This function scans the function string
@@ -417,7 +440,7 @@
             var thisKeyword = 'this.';
         
             var stopChars = [
-                '\t', ' ', '(', ')', '{', '}',
+                '\t', ' ', ')', '{', '}',
                 '+', '-', '*', '/', '<', '>', '=',
                 '!', '@', '#', '%', '^', '&', '|',
                 '?', ':', '\'', '\"', ';'
@@ -442,11 +465,15 @@
                     continue;
         
                 var raw = '';
-                var m = c, char = ''; 
+                var m = c, char = '', isFunc = false; 
                 while(isStopChar(char) === false && i + m < len){
+                    if(char === '(')
+                        isFunc = true;
                     raw += char;
                     char = str[i + m++];
                 }
+                if(isFunc === true)
+                    raw = removeLastFromRef(raw);
                 if(raws.indexOf(raw) === -1)
                     raws.push(raw);
                 
@@ -486,24 +513,6 @@
             return ref;
         
         }
-
-        /**
-         * This function removes the last
-         * element from the reference.
-         */
-        function removeLastFromRef(ref){
-
-            if(ref.indexOf('.') === -1)
-                return undefined;
-            
-            var splits = ref.split('.');
-            var newRef = splits[0], len = splits.length - 1;
-            for(var i = 1; i < len; i++)
-                newRef += '.' + splits[i];
-            
-            return newRef;
-        
-        }
         
         /**
          * This function fetch all associated 
@@ -516,12 +525,7 @@
             var $refReactive = {};
             for(var i in raws){
                 var ref = rawRefToRef(raws[i]);
-                var $reactive = $min._getReactive(ref);
-                while(isUnDef($reactive)){
-                    ref = removeLastFromRef(ref);
-                    if(isUnDef(ref)) break;
-                    $reactive = $min._getReactive(ref);
-                }
+                var $reactive = $min._reactiveFromRef(ref);
                 if(isUnDef($reactive))
                     return error(
                         'Unable to proceed, unidentified property ' +
@@ -535,6 +539,10 @@
         }
 
         M.prototype.$compute = function(prop, comp){
+
+            if(isUnDef(prop) || isUnDef(comp) || !isFunction(comp))
+                return error('The given params is undefined/invalid.');
+
             var compStr = comp.toString();
             comp = comp.bind(this);
             var $reactive = new Reactive(this, [], prop, undefined, comp);
@@ -552,8 +560,33 @@
         }
 
         M.prototype.$watch = function(ref, handler){
-            var $reactive = this._getReactive(ref);
+
+            if(isUnDef(ref) || isUnDef(handler) || !isFunction(handler))
+                return error('The given params is undefined/invalid.');
+
+            var $reactive = this._reactiveFromRef(ref);
+            if(isUnDef($reactive))
+                return error('Undefined property in reference.');
+
             $reactive.$setter.watch = handler;
+
+        }
+
+        M.prototype.$unwatch = function(ref){
+
+            if(isUnDef(ref))
+                return error('The given params is undefined/invalid.');
+
+            var $reactive = this._reactiveFromRef(ref);
+            if(isUnDef($reactive))
+                return error('Undefined property in reference.');
+
+            var $setter = $reactive.$setter;
+            if(isUnDef($setter.watch))
+                return error('Unable to unwatch non-watched property.');
+
+            delete $setter.watch;
+
         }
 
     }
