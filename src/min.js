@@ -142,7 +142,7 @@
         
     }
 
-    function Min(host){
+    function Min($init){
 
         if(!this instanceof Min)
             error('Constructor must be called with the new keyword.');
@@ -152,6 +152,8 @@
         var $mixin = Min.$mixin;
         var mixin; for(mixin in $mixin)
             this._extend($mixin[mixin]);
+
+        var host = this._init($init);
 
     }
 
@@ -174,6 +176,47 @@
         for(var prop in $)
             if($.hasOwnProperty(prop) || !this.hasOwnProperty(prop))
                 this[prop] = $[prop];
+
+    }
+
+    var initParamProps = [
+        'elem',
+        'data',
+        'compute',
+        'watch'
+    ];
+
+    function validateInitParam($init){
+        for(var prop in $init)
+            if(initParamProps.indexOf(prop) === -1 || !isObject($init[prop]))
+                return false;
+        return true;
+    }
+
+    Min.prototype._init = function($init){
+
+        if(!isObject($init))
+            return error('Init param must be type of Object.');
+
+        if(!validateInitParam($init))
+            return error(
+                'Init param must be the following keywords: elem, ' + 
+                'data, compute, watch. And should be type of Object.'
+            );
+
+        var $data = $init.data;
+        for(var prop in $data)
+            this.$data(prop, $data[prop]);
+
+        var $compute = $init.compute;
+        for(var prop in $compute)
+            this.$compute(prop, $compute[prop]);
+
+        var $watch = $init.watch;
+        for(var ref in $watch)
+            this.$watch(ref, $watch[ref]);
+
+        return $init.elem;
 
     }
     
@@ -293,29 +336,8 @@
 
         if(isDef(val)){
             this.val = val;
-            if(this.isObject === true){
-
-                /**
-                 * This releases the linkage in one direction
-                 * from the listener to the caller Reactive,
-                 * this ensures the caller Reactive being
-                 * garbage collected in garbage collection.
-                 */
-                var callers = this.callers;
-                var newCallers = [];
-                for(var i in callers){
-                    var $callerReactive = $reactiveCollection[callers[i]];
-                    /**
-                     * Computed Property will not be unlinked
-                     * in this process as they are not in the
-                     * property sub tree.
-                     */
-                    if($callerReactive.isCompute === true)
-                        newCallers.push(callers[i]);
-                }
-                this.callers = newCallers;
-
-            }
+            if(this.isObject === true && this.isCompute === false)
+                this.callers = [];
             this.isObject = isObject(val);
         }
         
@@ -445,7 +467,12 @@
 
             var sweeped = sweepReactiveCollection($reactiveCollection, $lifeReactiveCollection);
 
-            log('watcherMASGC', 'Sweeped ' + sweeped + ' unused reactives.');
+            /**
+             * Remove the reference if given, pointed to the objects.
+             */
+            delete this.$curReactive;
+
+            log('watcherMASGC', 'Sweeped ' + sweeped + ' unused Reactives.');
 
         }
 
@@ -698,10 +725,9 @@
             ];
         
             function isStopChar(char){
-                for(var i in stopChars)
-                    if(char === stopChars[i])
-                        return true;
-                return false;
+                if(stopChars.indexOf(char) === -1)
+                    return false;
+                return true;
             }
         
             var raws = [];
@@ -797,6 +823,7 @@
             var compStr = comp.toString();
             comp = comp.bind(this);
             var $reactive = new Reactive(this, [], prop, undefined, comp);
+            this.rootReactives.push($reactive);
             define(this, this, prop, $reactive);
             
             var $callerReactive = reactivesFromStr(this, compStr);
