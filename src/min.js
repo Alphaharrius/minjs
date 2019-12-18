@@ -25,6 +25,7 @@
  * - Upcoming work to migrate the Parallex DOM and implement new APIs.
  * - Migrated the Parallex DOM
  * - Upcoming work to migrate the Autoworker runtime and implement new APIs.
+ * - Abandoned Autoworker for a new implementation of runtime with IntervalHandler.
  */
 
 (function(global, factory){ 
@@ -68,7 +69,7 @@
         return m !== null && m !== undefined;
     }
 
-    function isUnDef(m){
+    function isUndef(m){
         return m !== null && m === undefined;
     }
 
@@ -172,6 +173,7 @@
 
         var host = this._init($init);
         this._setHostElement(host);
+        this._runtimeInit();
 
     }
 
@@ -242,6 +244,7 @@
      * Mixing of native methods and APIs
      */
     watcherMixin(Min);
+    runtimeMixin(Min);
     vnodeMixin(Min);
     vdomMixin(Min);
 
@@ -319,18 +322,18 @@
         /**
          * Add this Reactive to the current vm.
          */
-        $min.$reactiveCollection[this.self] = this;
+        $min.$reactives[this.self] = this;
 
     }
 
     Reactive.prototype._bindListeners = function(){
 
-        var $reactiveCollection = this.$min.$reactiveCollection;
+        var $reactives = this.$min.$reactives;
 
         var listeners = this.listeners;
         for(var i in listeners){
 
-            var $callerReactive = $reactiveCollection[listeners[i]];
+            var $callerReactive = $reactives[listeners[i]];
             $callerReactive.callers.push(this.self);
 
         }
@@ -343,7 +346,7 @@
      */
     Reactive.prototype._update = function(updateListeners, invokeSetters, val){
 
-        var $reactiveCollection = this.$min.$reactiveCollection;
+        var $reactives = this.$min.$reactives;
         var oldVal = this.oldVal;
 
         if(this.isCompute === true){
@@ -383,6 +386,7 @@
             for(var setter in $setter)
                 $setter[setter].call(null, this.val, oldVal);
         }
+
         /**
          * Update the old value to the new value,
          * cloning of the new value separates the
@@ -396,7 +400,7 @@
 
         var listeners = this.listeners;
         for(var i in listeners)
-            $reactiveCollection[listeners[i]]._update(true, true);
+            $reactives[listeners[i]]._update(true, true);
 
         return oldVal;
 
@@ -404,7 +408,7 @@
 
     function watcherMixin(M){
 
-        M.$mixin.watcher = {
+        M.$mixin.$watcher = {
 
             /**
              * This defines the new index that will 
@@ -420,7 +424,7 @@
             /**
              * This stores the Reactive Objects within current vm.
              */
-            $reactiveCollection : {},
+            $reactives : {},
 
             /**
              * This stores the root Reactives
@@ -439,12 +443,12 @@
          */
          M.prototype._reactiveFromRef = function(ref){
 
-            var $reactiveCollection = this.$reactiveCollection;
+            var $reactives = this.$reactives;
 
             function search($reactive, prop){
                 var callers = $reactive.callers;
                 for(var i in callers){
-                    var $idxReactive = $reactiveCollection[callers[i]];
+                    var $idxReactive = $reactives[callers[i]];
                     if($idxReactive.prop === prop)
                         return $idxReactive;
                 }
@@ -462,7 +466,7 @@
                     break;
                 }
             }
-            if(isUnDef($rootReactive))
+            if(isUndef($rootReactive))
                 return;
 
             var len = props.length;
@@ -487,13 +491,13 @@
          * will flush the callers, Reactives that is unreachable
          * will not be added to the life Reactive collection.
          */
-        function markLifeReactives($reactiveCollection, $currentReactive, $lifeReactiveCollection){
+        function markLifeReactives($reactives, $currentReactive, $lifeReactives){
 
-            $lifeReactiveCollection[$currentReactive.self] = true;
+            $lifeReactives[$currentReactive.self] = true;
             var callers = $currentReactive.callers;
             for(var i in callers){
                 var reactive = callers[i];
-                markLifeReactives($reactiveCollection, $reactiveCollection[reactive], $lifeReactiveCollection);
+                markLifeReactives($reactives, $reactives[reactive], $lifeReactives);
             }
 
         }
@@ -502,13 +506,13 @@
          * All Reactives that is not in the life Reactive Collection
          * will be removed from the current Reactive Collection.
          */
-        function sweepReactiveCollection($reactiveCollection, $lifeReactiveCollection){
+        function sweepReactiveCollection($reactives, $lifeReactives){
 
             var sweeped = 0;
 
-            for(var reactive in $reactiveCollection)
-                if(isUnDef($lifeReactiveCollection[reactive]))
-                    delete $reactiveCollection[reactive], sweeped++;
+            for(var reactive in $reactives)
+                if(isUndef($lifeReactives[reactive]))
+                    delete $reactives[reactive], sweeped++;
 
             return sweeped;
 
@@ -521,14 +525,14 @@
          */
         M.prototype._watcherMASGC = function(){
 
-            var $reactiveCollection = this.$reactiveCollection;
-            var $lifeReactiveCollection = {};
+            var $reactives = this.$reactives;
+            var $lifeReactives = {};
 
             var rootReactives = this.rootReactives;
             for(var i in rootReactives)
-                markLifeReactives($reactiveCollection, rootReactives[i], $lifeReactiveCollection);
+                markLifeReactives($reactives, rootReactives[i], $lifeReactives);
 
-            var sweeped = sweepReactiveCollection($reactiveCollection, $lifeReactiveCollection);
+            var sweeped = sweepReactiveCollection($reactives, $lifeReactives);
 
             /**
              * Remove the reference if given, pointed to the objects.
@@ -621,11 +625,11 @@
              * Helper to get the Reactive of a indexed
              * element of the array.
              */
-            var $reactiveCollection = $min.$reactiveCollection;
+            var $reactives = $min.$reactives;
             function reactiveIdxFromIdx(idx){
                 var callers = $arrReactive.callers;
                 for(var i in callers){
-                    $callerReactive = $reactiveCollection[callers[i]];
+                    $callerReactive = $reactives[callers[i]];
                     if($callerReactive.prop == idx)
                         return $callerReactive.self;
                 }
@@ -637,10 +641,10 @@
              */
             function removeReactive(idx){
                 var reactive = reactiveIdxFromIdx(idx);
-                var callers = $reactiveCollection[reactive].callers;
+                var callers = $reactives[reactive].callers;
                 for(var i in callers)
-                    delete $reactiveCollection[callers[i]];
-                delete $reactiveCollection[reactive];
+                    delete $reactives[callers[i]];
+                delete $reactives[reactive];
                 return reactive;
             }
 
@@ -652,7 +656,7 @@
                 value(){
 
                     var ret = _pop.call(this);
-                    if(isUnDef(ret))
+                    if(isUndef(ret))
                         return;
 
                     var reactive = removeReactive(this.length);
@@ -681,7 +685,7 @@
                     reactive = removeReactive(0);
                     var ret = _shift.call(this);
                     for(var i in reactives)
-                        define($min, arr, i, $reactiveCollection[reactives[i]]);
+                        define($min, arr, i, $reactives[reactives[i]]);
 
                     remove($arrReactive.callers, reactive);
                     $arrReactive._update();
@@ -711,7 +715,7 @@
                         deep($min, this[0], $newReactive);
                         
                     for(var i = 1, len = this.length; i < len; i++){
-                        var $idxReactive = $reactiveCollection[reactives[i - 1]];
+                        var $idxReactive = $reactives[reactives[i - 1]];
                         $idxReactive.prop = i;
                         define($min, this, i, $idxReactive);
                     }
@@ -747,7 +751,7 @@
 
         M.prototype.$data = function(prop, val){
 
-            if(isUnDef(prop) || isUnDef(val) || isFunction(val))
+            if(isUndef(prop) || isUndef(val) || isFunction(val))
                 return error('The given params is undefined/invalid.');
 
             var $reactive = new Reactive(this, [], prop, val);
@@ -878,7 +882,7 @@
             for(var i in raws){
                 var ref = rawRefToRef(raws[i]);
                 var $reactive = $min._reactiveFromRef(ref);
-                if(isUnDef($reactive))
+                if(isUndef($reactive))
                     return error(
                         'Unable to proceed, unidentified property ' +
                         'in the compute function...'
@@ -892,7 +896,7 @@
 
         M.prototype.$compute = function(prop, comp){
 
-            if(isUnDef(prop) || isUnDef(comp) || !isFunction(comp))
+            if(isUndef(prop) || isUndef(comp) || !isFunction(comp))
                 return error('The given params is undefined/invalid.');
 
             var compStr = comp.toString();
@@ -916,11 +920,11 @@
 
         M.prototype.$watch = function(ref, handler){
 
-            if(isUnDef(ref) || isUnDef(handler) || !isFunction(handler))
+            if(isUndef(ref) || isUndef(handler) || !isFunction(handler))
                 return error('The given params is undefined/invalid.');
 
             var $reactive = this._reactiveFromRef(ref);
-            if(isUnDef($reactive))
+            if(isUndef($reactive))
                 return error('Undefined property in reference.');
 
             $reactive.$setter.watch = handler;
@@ -929,15 +933,15 @@
 
         M.prototype.$unwatch = function(ref){
 
-            if(isUnDef(ref))
+            if(isUndef(ref))
                 return error('The given params is undefined/invalid.');
 
             var $reactive = this._reactiveFromRef(ref);
-            if(isUnDef($reactive))
+            if(isUndef($reactive))
                 return error('Undefined property in reference.');
 
             var $setter = $reactive.$setter;
-            if(isUnDef($setter.watch))
+            if(isUndef($setter.watch))
                 return error('Unable to unwatch non-watched property.');
 
             delete $setter.watch;
@@ -953,38 +957,167 @@
      * such as the invokers of DOM events or any
      * form of high frequency called functions.
      */
-    function IntervalHandler($subs, intv){
+    function IntervalHandler(subs, intv){
         this.intv = intv;
-        this.$subs = $subs;
+        this.subs = subs;
         this.work = undefined;
         this.cont = false;
     }
     
-    IntervalHandler.prototype.$subscribe = function(key, handler){
-        this.$subs[key] = handler;
-    }
-
-    IntervalHandler.prototype.$unsubscribe = function(key){
-        if(isDef(this.$subs[key]))
-            delete this.$subs[key];
-    }
-    
     IntervalHandler.prototype._call = function(){
         var _this = this;
-        var $subs = this.$subs;
+        var subs = this.subs;
         if(isDef(this.work)){
             this.cont = true;
             return;
         }
         this.work = setInterval(function(){
             _this.cont = false;
-            for(var subs in $subs)
-                $subs[subs].call(_this);
+            subs.call(_this);
             if(_this.cont === false){
                 clearInterval(_this.work);
                 _this.work = undefined;
             }
         }, this.intv);
+    }
+
+    /**
+     * Min Runtime
+     *  - This runtime is implemented using IntervalHandler.
+     *  - This runtime is invoked in all DOM changes.
+     *  - This runtime can be invoked using _invokeRuntime.
+     */
+    function runtimeMixin(M){
+
+        M.$mixin.$runtime = {
+
+            $runtime : {
+
+                $runtimeHandler : undefined,
+
+                runtimeInterval : 25
+
+            }
+
+        }
+
+        M.prototype._runtimeInit = function(){
+
+            var $runtime = this.$runtime;
+
+            if(isDef($runtimeHandler))
+                return;
+
+            /**
+             * It is safe to pass this function to
+             * the IntervalHandler to execute as
+             * the subscribed function will be run
+             * synchronously, all addition to both
+             * buffers will be processed after or
+             * before this function's execution.
+             */
+            var runtime = function(){
+
+                var $min = this.$min;
+
+                var revampVnodes = this.revampVnodes;
+                var $patchVnodes = this.$patchVnodes;
+
+                if(revampVnodes.length !== 0){
+                    $min._parallexRevamp(revampVnodes);
+                    this.revampVnodes = [];
+                }
+
+                if(keys($patchVnodes).length !== 0){
+                    $min._parallexPatch($patchVnodes);
+                    this.$patchVnodes = {};
+                }
+
+            }
+
+            var $runtimeHandler = new IntervalHandler(runtime, $runtime.runtimeInterval);
+            
+            $runtimeHandler.$min = this;
+            $runtimeHandler.$patchVnodes = {};
+            $runtimeHandler.revampVnodes = [];
+
+            $runtime.$runtimeHandler = $runtimeHandler;
+
+        }
+
+        M.prototype._invokeRuntime = function(vn, p, $p, r){
+
+            var $runtimeHandler = this.$runtime.$runtimeHandler;
+
+            var $patchVnodes = $runtimeHandler.$patchVnodes;
+            var revampVnodes = $runtimeHandler.revampVnodes;
+
+            if(isUndef($patchVnodes[vn]))
+                $patchVnodes[vn] = {
+
+                    doHide : false,
+
+                    ppAll : false,
+
+                    attAll : false,
+
+                    clAll : false,
+
+                    slAll : false,
+
+                    $pp : {},
+
+                    $att : {},
+
+                    $cl : {},
+
+                    $sl : {}
+
+                }
+
+            var $vnPatch = $patchVnodes[vn];
+            
+            if(p === true)
+                
+                $vnPatch.doHide = 
+                $vnPatch.ppAll = 
+                $vnPatch.attAll = 
+                $vnPatch.clAll = 
+                $vnPatch.slAll = true;
+
+            else if(isDef($p)){
+
+                if($p.doHide === true) $vnPatch.doHide = true;
+
+                var pp = $p.pp;
+                if(isDef(pp)) $vnPatch.$pp[pp] = true;
+
+                var att = $p.att;
+                if(isDef(att)) $vnPatch.$att[att] = true;
+
+                var cl = $p.cl;
+                if(isDef(cl)) $vnPatch.$cl[cl] = true;
+
+                var sl = $p.sl;
+                if(isDef(sl)) $vnPatch.$sl[sl] = true;
+
+            }
+
+            if(r === true)
+                revampVnodes.push(vn);
+
+            $runtimeHandler._call();
+
+        }
+
+        M.prototype._setRuntimeInterval = function(intv){
+
+            var $runtime = this.$runtime;
+            $runtime.runtimeInterval = intv;
+            $runtime.$runtimeHandler.intv = intv;
+
+        }
+
     }
 
     function vnodeMixin(M){
@@ -1109,12 +1242,12 @@
             var $parallex = this.$parallex;
             var $vDOM = $parallex.$vDOM;
 
-            if(isUnDef(pn))
+            if(isUndef(pn))
                 pn = M.PARALLEX_VN_HOST;
 
             var $vn = $vDOM[vn], $pn = $vDOM[pn];
 
-            if(isUnDef($vn) || isUnDef($pn))
+            if(isUndef($vn) || isUndef($pn))
                 return false;
 
             /**
@@ -1129,8 +1262,10 @@
             $pn.cns.push(vn);
 
             /**
-             * Below for the invoking the runtime.
+             * Invoking the runtime.
              */
+            this._invokeRuntime(vn, true, undefined, false);
+            this._invokeRuntime(pn, false, undefined, true);
 
             return true;
 
@@ -1143,7 +1278,7 @@
 
             var $vn = $vDOM[vn];
 
-            if(isUnDef($vn))
+            if(isUndef($vn))
                 return false;
 
             var pn = $vn.pn;
@@ -1159,6 +1294,7 @@
             /**
              * Below for the invoking the runtime.
              */
+            this._invokeRuntime(pn, false, undefined, true);
 
             return true;
 
@@ -1205,7 +1341,7 @@
                 break;
             }
 
-        if(isUnDef(css))
+        if(isUndef(css))
             return error(
                 'Unable to insert transition animations.'
             );
@@ -1246,7 +1382,7 @@
         $vDOMInit[M.PARALLEX_VN_HOST] = deepClone($hostInit);
         $rDOMInit[M.PARALLEX_VN_HOST] = deepClone($hostInit);
 
-        M.$mixin.vdom = {
+        M.$mixin.$vdom = {
 
             $parallex : {
                 
@@ -1268,6 +1404,24 @@
             this.$parallex.$vTrace[M.PARALLEX_VN_HOST] = hostElem;
         }
 
+        /**
+         * Parallex Patch
+         * - To use this function, an Object type param
+         * - must be passed, the format is as follow:
+         * 
+         *  $ops : {
+         *      doHide  :   BOOLEAN,
+         *      ppAll   :   BOOLEAN,
+         *      attAll  :   BOOLEAN,
+         *      clAll   :   BOOLEAN,
+         *      slAll   :   BOOLEAN,
+         *      $pp     :   OBJECT,
+         *      $att    :   OBJECT,
+         *      $sl     :   OBJECT,
+         *      $cl     :   OBJECT
+         *  }
+         * 
+         */
         M.prototype._parallexPatch = function($ops){
 
             var $parallex = this.$parallex;
@@ -1301,7 +1455,7 @@
                     dum.style.animation = ranim;
 
                     setTimeout(function(){
-                        removeChild(pt, dum);
+                        pt.removeChild(dum);
                         return;
                     }, ranimd);
 
@@ -1504,6 +1658,11 @@
 
         }
 
+        /**
+         * Parallex Revamp
+         * This function takes in an array of vnodes
+         * to be revamped, which updates the children.
+         */
         M.prototype._parallexRevamp = function(vns){
 
             /**
@@ -1597,7 +1756,7 @@
                      * children list,
                      * remove the node and skip one child
                      */
-                    if(rd && isUnDef(vmap[rc])){
+                    if(rd && isUndef(vmap[rc])){
 
                         m++;
                         vremove(vn, rc);
@@ -1612,7 +1771,7 @@
                      * children list,
                      * append the node with the correct order
                      */
-                    if(vd && isUnDef(rmap[vc])){
+                    if(vd && isUndef(rmap[vc])){
 
                         n++;
 
@@ -1685,7 +1844,7 @@
                 var k; for(k = vcs.length; k >= 0; k--){
                     var vc = vcs[k];
                     var $ = $apn[vc];
-                    if(isUnDef($))
+                    if(isUndef($))
                         continue;
                     vbefore(vc, $.b, $.p);
                 }
@@ -1712,7 +1871,7 @@
                         return;
                     }, $n.aanimd);
                 }
-                if(isUnDef(nn))
+                if(isUndef(nn))
                     $vTrace[p].appendChild(t);
                 else
                     $vTrace[p].insertBefore(t, $vTrace[nn]);
@@ -1739,11 +1898,11 @@
                     replaceChild(pt, dum, t);
                     dum.style.animation = ranim;
                     setTimeout(function(){
-                        removeChild(pt, dum);
+                        pt.removeChild(dum);
                         return;
                     }, $n.ranimd);
-                }else if(isUnDef($rvppp[n]))
-                    removeChild($vTrace[p], t);
+                }else if(isUndef($rvppp[n]))
+                    pt.removeChild(t);
 
                 if($n.pn === M.PARALLEX_PN_RMV){
                     delete $vDOM[n];
