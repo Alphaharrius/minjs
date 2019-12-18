@@ -1121,12 +1121,8 @@
              * We will not use _pull because 
              * of performance impact.
              */
-            if($vn.pn !== M.PARALLEX_PN_STORE){
-
+            if($vn.pn !== M.PARALLEX_PN_STORE)
                 remove($vDOM[$vn.pn].cns, vn);
-                $vn.pn = M.PARALLEX_PN_STORE;
-
-            }
 
             $vn.pn = pn;
 
