@@ -327,17 +327,29 @@
         var $reactiveCollection = this.$min.$reactiveCollection;
         var oldVal = this.oldVal;
 
-        if(this.isCompute === true && isUnDef(val)){
+        if(this.isCompute === true){
             /**
              * The compute function is assumed 
              * to be binded to the current vm.
+             * If the compute function relates
+             * to other compute properties, 
+             * those properties will be updated
+             * before the compute function returns
+             * the value.
              */
             val = this.compute.call();
+
             /**
-             * Assume this property is most updated
-             * after this computation update.
+             * As compute properties will triggers
+             * a update on get, to prevent trivial
+             * updates on the vm, return the update
+             * function when the computed value is
+             * equal to the old value.
              */
-            this.dirty = false;
+            if(oldVal === val){
+                this.oldVal = deepClone(this.val);
+                return;
+            }
         }
 
         if(isDef(val)){
