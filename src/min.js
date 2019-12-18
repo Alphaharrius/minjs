@@ -330,7 +330,7 @@
      * when the associated property gets changed or
      * the callers updates this Reactive.
      */
-    Reactive.prototype._update = function(updateListeners, val){
+    Reactive.prototype._update = function(updateListeners, invokeSetters, val){
 
         var $reactiveCollection = this.$min.$reactiveCollection;
         var oldVal = this.oldVal;
@@ -367,9 +367,11 @@
             this.isObject = isObject(val);
         }
         
-        var $setter = this.$setter;
-        for(var setter in $setter)
-            $setter[setter].call(null, this.val, oldVal);
+        if(invokeSetters === true){
+            var $setter = this.$setter;
+            for(var setter in $setter)
+                $setter[setter].call(null, this.val, oldVal);
+        }
         /**
          * Update the old value to the new value,
          * cloning of the new value separates the
@@ -383,7 +385,7 @@
 
         var listeners = this.listeners;
         for(var i in listeners)
-            $reactiveCollection[listeners[i]]._update();
+            $reactiveCollection[listeners[i]]._update(true, true);
 
         return oldVal;
 
@@ -550,7 +552,7 @@
                     $min.$curReactive = $r;
 
                     if($r.isCompute)
-                        $r._update(false);
+                        $r._update(false, false);
                     return $r.val;
                 },
                 set(v){
@@ -561,7 +563,7 @@
                      */
                     if(v === $r.val)
                         return;
-                    $r._update(true, v);
+                    $r._update(true, true, v);
                     /**
                      * Convert all sub properties
                      * into Reactive if v is type
