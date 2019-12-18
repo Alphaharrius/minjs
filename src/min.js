@@ -136,7 +136,7 @@
     function error(msg){
 
         msg = '[Min Error]=>"' + msg + '"';
-        console.warn(
+        console.error(
             new Error(msg).stack
         );
         
@@ -322,17 +322,23 @@
      * when the associated property gets changed or
      * the callers updates this Reactive.
      */
-    Reactive.prototype._update = function(val){
+    Reactive.prototype._update = function(updateListeners, val){
 
         var $reactiveCollection = this.$min.$reactiveCollection;
         var oldVal = this.oldVal;
 
-        if(this.isCompute === true)
+        if(this.isCompute === true && isUnDef(val)){
             /**
              * The compute function is assumed 
              * to be binded to the current vm.
              */
             val = this.compute.call();
+            /**
+             * Assume this property is most updated
+             * after this computation update.
+             */
+            this.dirty = false;
+        }
 
         if(isDef(val)){
             this.val = val;
@@ -351,6 +357,9 @@
          * new value.
          */
         this.oldVal = deepClone(this.val);
+
+        if(updateListeners === false)
+            return;
 
         var listeners = this.listeners;
         for(var i in listeners)
@@ -395,20 +404,41 @@
          * function does not have protection against undefined
          * references, if the Reactive is not found.
          */
-        M.prototype._reactiveFromRef = function(ref){
+         M.prototype._reactiveFromRef = function(ref){
+
+            var $reactiveCollection = this.$reactiveCollection;
+
+            function search($reactive, prop){
+                var callers = $reactive.callers;
+                for(var i in callers){
+                    var $idxReactive = $reactiveCollection[callers[i]];
+                    if($idxReactive.prop === prop)
+                        return $idxReactive;
+                }
+            }
 
             var props = ref.split('.');
-            if(props.length > 1){
-                var $ = this;
-                for(var i in props)
-                    $[props[i]],
-                    $ = $[props[i]];
-            }else this[ref];
+            var rootProp = props[0];
+            
+            var rootReactives = this.rootReactives;
+            var $rootReactive = undefined;
+            for(var i in rootReactives){
+                var $reactive = rootReactives[i];
+                if($reactive.prop === rootProp){
+                    $rootReactive = $reactive;
+                    break;
+                }
+            }
+            if(isUnDef($rootReactive))
+                return;
 
-            var $reactive = this.$curReactive;
-            this.$curReactive = undefined;
+            var len = props.length;
+            var $curReactive = $rootReactive;
+            var c = 1; while(c < len && isDef($curReactive)){
+                $curReactive = search($curReactive, props[c++]);
+            }
 
-            return $reactive;
+            return $curReactive;
 
         }
 
@@ -498,10 +528,20 @@
                      * Set the recent Reactive be this.
                      */
                     $min.$curReactive = $r;
+
+                    if($r.isCompute)
+                        $r._update(false);
                     return $r.val;
                 },
                 set(v){
-                    $r._update(v);
+                    /**
+                     * Prevent redundant operations 
+                     * and infinite loop of cyclic
+                     * linkage.
+                     */
+                    if(v === $r.val)
+                        return;
+                    $r._update(true, v);
                     /**
                      * Convert all sub properties
                      * into Reactive if v is type
@@ -707,28 +747,28 @@
             return newRef;
         
         }
+
+        var stopChars = [
+            '\t', ' ', ')', '{', '}',
+            '+', '-', '*', '/', '<', '>', '=',
+            '!', '@', '#', '%', '^', '&', '|',
+            '?', ':', '\'', '\"', ';'
+        ];
+
+        function isStopChar(char){
+            if(stopChars.indexOf(char) === -1)
+                return false;
+            return true;
+        }
         
         /**
          * This function scans the function string
          * and extract all references that begins
          * with the this keyword without duplicates.
          */
-        function rawRefsFromStr(str){
+        function rawRefsFromStr(str, thisLocations){
 
             var thisKeyword = 'this.';
-        
-            var stopChars = [
-                '\t', ' ', ')', '{', '}',
-                '+', '-', '*', '/', '<', '>', '=',
-                '!', '@', '#', '%', '^', '&', '|',
-                '?', ':', '\'', '\"', ';'
-            ];
-        
-            function isStopChar(char){
-                if(stopChars.indexOf(char) === -1)
-                    return false;
-                return true;
-            }
         
             var raws = [];
             var len = str.length;
@@ -740,6 +780,8 @@
                         cont = false;
                 if(cont === false)
                     continue;
+
+                thisLocations.push(i);
         
                 var raw = '';
                 var m = c, char = '', isFunc = false; 
@@ -796,9 +838,9 @@
          * Reactives of the properties found 
          * within a function string.
          */
-        function reactivesFromStr($min, str){
+        function reactivesFromStr($min, str, thisLocations){
         
-            var raws = rawRefsFromStr(str);
+            var raws = rawRefsFromStr(str, thisLocations);
             var $refReactive = {};
             for(var i in raws){
                 var ref = rawRefToRef(raws[i]);
@@ -825,8 +867,10 @@
             var $reactive = new Reactive(this, [], prop, undefined, comp);
             this.rootReactives.push($reactive);
             define(this, this, prop, $reactive);
-            
-            var $callerReactive = reactivesFromStr(this, compStr);
+
+            var thisLocations = [];
+            var $callerReactive = reactivesFromStr(this, compStr, thisLocations);
+
             for(var ref in $callerReactive){
                 $currentReactive = $callerReactive[ref];
                 $currentReactive.listeners.push($reactive.self);
