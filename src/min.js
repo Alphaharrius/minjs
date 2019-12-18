@@ -17,6 +17,14 @@
  * 
  */
 
+/**
+ * Dev Log
+ * - Implemented Watcher.
+ * - Tested the functionality of Watcher, Passed.
+ * - Upcoming work to implement the Update Checker that runs watcherMASGC automatically.
+ * - Upcoming work to migrate the Parallex DOM and implement new APIs.
+ */
+
 (function(global, factory){ 
     global.module === undefined && 
     typeof global.module !== 'object' ? global.module = {exports : undefined} : {}, 
