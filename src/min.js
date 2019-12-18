@@ -23,6 +23,8 @@
  * - Tested the functionality of Watcher, Passed.
  * - Upcoming work to implement the Update Checker that runs watcherMASGC automatically.
  * - Upcoming work to migrate the Parallex DOM and implement new APIs.
+ * - Migrated the Parallex DOM
+ * - Upcoming work to migrate the Autoworker runtime and implement new APIs.
  */
 
 (function(global, factory){ 
@@ -127,12 +129,19 @@
         return $clone;
     }
 
-    /**
-     * Check if the given prop is a computed prop
-     * which normally not start with 'on'
-     */
-    function isComProp(prop){
-        return prop[0] !== 'o' || prop[1] !=='n';
+    function shallowClone($object){
+
+        if(!isObject($object))
+            return $object;
+
+        var $clone = Array.isArray($object) ? [] : {};
+
+        for(var i in $object)
+            if($object.hasOwnProperty(i))
+                $clone[i] = $object[i];
+
+        return $clone;
+
     }
 
     function log(caller, msg){
@@ -162,6 +171,7 @@
             this._extend($mixin[mixin]);
 
         var host = this._init($init);
+        this._setHostElement(host);
 
     }
 
@@ -232,7 +242,8 @@
      * Mixing of native methods and APIs
      */
     watcherMixin(Min);
-    eventMixin(Min);
+    vnodeMixin(Min);
+    vdomMixin(Min);
 
     /**
      * A Reactive Object defines the value and attributes of
@@ -393,7 +404,7 @@
 
     function watcherMixin(M){
 
-        Min.$mixin.watcher = {
+        M.$mixin.watcher = {
 
             /**
              * This defines the new index that will 
@@ -942,7 +953,6 @@
      * such as the invokers of DOM events or any
      * form of high frequency called functions.
      */
-    
     function IntervalHandler($subs, intv){
         this.intv = intv;
         this.$subs = $subs;
@@ -977,11 +987,777 @@
         }, this.intv);
     }
 
-    function eventMixin(M){
+    function vnodeMixin(M){
 
-        M.$mixin.event = {
+        function createElemNodeTrace($vn){
 
-            $evtHandler : {}
+            var trace = document.createElement($vn.tag);
+
+            var $att = $vn.$attrib;
+            for(var att in $att)
+                trace.setAttribute(att, $att[att]);
+
+            var $pp = $vn.$prop;
+            for(var pp in $pp)
+                trace[pp] = $pp[pp];
+
+            var $cs = $vn.$class;
+            var cl = trace.classList;
+            for(var cs in $cs)
+                cl.add(cs);
+
+            var $sl = $vn.$style;
+            var tsl = trace.style;
+            for(var sl in $sl)
+                tsl[sl] = $sl[sl];
+
+            return trace;
+
+        }
+
+        function createTextNodeTrace($vn){
+
+            return document.createTextNode($vn.$prop.textContent);
+
+        }
+
+        function createElemNode(tag, $att, $pp, $cl, $sl){
+
+            return {
+
+                type : M.PARALLEX_VN_T_EL,
+
+                tag : tag,
+
+                $attrib : shallowClone($att),
+
+                $prop : shallowClone($pp),
+
+                $class : shallowClone($cl),
+
+                $style : shallowClone($sl),
+
+                pn : M.PARALLEX_PN_STORE,
+
+                cns : [],
+
+                hide : false
+
+            }
+
+        }
+
+        function createTextNode(content){
+
+            return {
+
+                type : M.PARALLEX_VN_T_TXT,
+
+                $prop : {
+
+                    textContent : content
+
+                },
+
+                pn : M.PARALLEX_PN_STORE,
+
+                hide : false
+
+            }
+
+        }
+
+        M.prototype._elem = function(tag, $att, $pp, $cl, $sl){
+
+            var $parallex = this.$parallex;
+
+            var vn = $parallex.vnCount++;
+
+            var $vn = $parallex.$vDOM[vn] = 
+                createElemNode(tag, $att, $pp, $cl, $sl);
+
+            $parallex.$rDOM[vn] = 
+                createElemNode(tag, $att, $pp, $cl, $sl);
+
+            $parallex.$vTrace[vn] = createElemNodeTrace($vn);
+
+            return vn;
+
+        }
+
+        M.prototype._text = function(content){
+
+            var $parallex = this.$parallex;
+
+            var vn = $parallex.vnCount++;
+
+            var $vn = $parallex.$vDOM[vn] = 
+                createTextNode(content);
+
+            $parallex.$rDOM[vn] = 
+                createTextNode(content);
+
+            $parallex.$vTrace[vn] = 
+                createTextNodeTrace($vn);
+
+            return vn;
+
+        }
+
+        M.prototype._pushVnode = function(vn, pn){
+
+            var $parallex = this.$parallex;
+            var $vDOM = $parallex.$vDOM;
+
+            if(isUnDef(pn))
+                pn = M.PARALLEX_VN_HOST;
+
+            var $vn = $vDOM[vn], $pn = $vDOM[pn];
+
+            if(isUnDef($vn) || isUnDef($pn))
+                return false;
+
+            /**
+             * We will not use _pull because 
+             * of performance impact.
+             */
+            if($vn.pn !== M.PARALLEX_PN_STORE){
+
+                remove($vDOM[$vn.pn].cns, vn);
+                $vn.pn = M.PARALLEX_PN_STORE;
+
+            }
+
+            $vn.pn = pn;
+
+            $pn.cns.push(vn);
+
+            /**
+             * Below for the invoking the runtime.
+             */
+
+            return true;
+
+        }
+
+        M.prototype._pullVnode = function(vn, rmv){
+
+            var $parallex = this.$parallex;
+            var $vDOM = $parallex.$vDOM;
+
+            var $vn = $vDOM[vn];
+
+            if(isUnDef($vn))
+                return false;
+
+            var pn = $vn.pn;
+            if(pn === M.PARALLEX_PN_STORE)
+                return false;
+
+            $vn.pn = rmv === true ?
+                M.PARALLEX_PN_RMV :
+                M.PARALLEX_PN_STORE;
+
+            remove($vDOM[pn].cns, vn);
+
+            /**
+             * Below for the invoking the runtime.
+             */
+
+            return true;
+
+        }
+
+    }
+
+    function vdomMixin(M){
+
+        M.PARALLEX_VN_T_EL = 1;
+        M.PARALLEX_VN_T_TXT = 3;
+
+        M.PARALLEX_PN_STORE = -2;
+        M.PARALLEX_PN_RMV = -3;
+        M.PARALLEX_VN_HOST = -1;
+
+        M.PARALLEX_ATT_SL = '$style';
+
+        M.PARALLEX_PP_INNERHTML = 'innerHTML';
+
+        var ANIMS = [
+            '@keyframes minfadein{from{opacity:0}to{opacity:1}}',
+            '@keyframes minfadeout{from{opacity:1}to{opacity:0}}',
+            '@keyframes minmovein{0%{left:100%}100%{left:0}}',
+            '@keyframes minmoveout{0%{left:0}100%{left:100%}}',
+            '@keyframes minfademovein{0%{left:100%;opacity:0}100%{left:0;opacity:1}}',
+            '@keyframes minfademoveout{0%{left:0;opacity:1}100%{left:100%;opacity:0}}',
+            '@keyframes minswell{0%{transform:scale(0)}100%{transform:scale(1)}}',
+            '@keyframes minshrink{0%{transform:scale(1)}100%{transform:scale(0)}',
+            '@keyframes minfadeswell{0%{opacity:0;transform:scale(0)}100%{opacity:1;transform:scale(1)}}',
+            '@keyframes minfadeshrink{0%{opacity:1;transform:scale(1)}100%{opacity:0;transform:scale(0)}',
+            '@keyframes minvexpand{0%{transform:scaleY(0)}100%{transform:scaleY(1)}}',
+            '@keyframes minvcompress{0%{transform:scaleY(1)}100%{transform:scaleY(0)}}',
+            '@keyframes minhexpand{0%{transform:scaleX(0)}100%{transform:scaleX(1)}}',
+            '@keyframes minhcompress{0%{transform:scaleX(1)}100%{transform:scaleX(0)}}'
+        ];
+
+        var css;
+
+        var sheets = document.styleSheets;
+        for(var i in sheets)
+            if(sheets[i].href === null){
+                css = sheets[i];
+                break;
+            }
+
+        if(isUnDef(css))
+            return error(
+                'Unable to insert transition animations.'
+            );
+
+        var i = 0, len = ANIMS.length;
+        for(; i < len; i++)
+            css.insertRule(ANIMS[i], css.cssRules.length);
+
+        M.ANIMATION = {
+            FADE_IN : ['minfadein ease-in-out 0.5s', 300],
+            FADE_OUT : ['minfadeout ease-in-out 0.5s', 300],
+            MOVE_IN : ['minmovein 0.15s forwards', 150],
+            MOVE_OUT : ['minmoveout 0.15s forwards', 150],
+            FADE_MOVE_IN : ['minfademovein 0.15s forwards', 150],
+            FADE_MOVE_OUT : ['minfademoveout 0.15s forwards', 150],
+            SWELL : ['minswell 0.5s ease-out forwards', 500],
+            SHRINK : ['minshrink 0.5s ease-in forwards', 500],
+            FADE_SWELL : ['minfadeswell 0.5s ease-out forwards', 500],
+            FADE_SHRINK : ['minfadeshrink 0.5s ease-in forwards', 500],
+            VEXPAND : ['minvexpand 0.2s ease-in-out forwards', 200],
+            VCOMPRESS : ['minvcompress 0.2s ease-in-out forwards', 200],
+            HEXPAND : ['minhexpand 0.2s ease-in-out forwards', 200],
+            HCOMPRESS : ['minhcompress 0.2s ease-in-out forwards', 200]
+        }
+
+        M.ANIMATION_PUSH = 0;
+        M.ANIMATION_PULL = 1;
+
+        var $hostInit = {
+
+            type : M.PARALLEX_VN_T_EL,
+
+            cns : []
+
+        }
+
+        var $vDOMInit = {}, $rDOMInit = {};
+        $vDOMInit[M.PARALLEX_VN_HOST] = deepClone($hostInit);
+        $rDOMInit[M.PARALLEX_VN_HOST] = deepClone($hostInit);
+
+        M.$mixin.vdom = {
+
+            $parallex : {
+                
+                vnCount : 0,
+
+                $vDOM : $vDOMInit,
+
+                $vTrace : {},
+
+                $hTrace : {},
+
+                $rDOM : $rDOMInit
+
+            }
+
+        }
+
+        M.prototype._setHostElement = function(hostElem){
+            this.$parallex.$vTrace[M.PARALLEX_VN_HOST] = hostElem;
+        }
+
+        M.prototype._parallexPatch = function($ops){
+
+            var $parallex = this.$parallex;
+
+            var $vDOM = $parallex.$vDOM;
+            var $rDOM = $parallex.$rDOM;
+            var $vTrace = $parallex.$vTrace;
+            var $hTrace = $parallex.$hTrace;
+
+            function hideTrace(vn, pn, ranim, ranimd){
+
+                /**
+                 * We will write the data of the comment
+                 * as the node index for this stage of 
+                 * developement, it will be removed in
+                 * release stage.
+                 */
+                var mk = document.createComment(vn);
+
+                var vt = $vTrace[vn];
+
+                if(isDef(ranim)){
+
+                    var pt = $vTrace[pn];
+
+                    var dum = vt.cloneNode(true);
+
+                    replaceChild(pt, dum, vt);
+                    insertBefore(pt, mk, dum);
+
+                    dum.style.animation = ranim;
+
+                    setTimeout(function(){
+                        removeChild(pt, dum);
+                        return;
+                    }, ranimd);
+
+                }else
+                    $vTrace[pn].replaceChild(mk, vt);
+
+                $vTrace[vn] = mk;
+                $hTrace[vn] = vt;
+
+            }
+    
+            function showTrace(vn, pn, aanim, aanimd){
+
+                var ht = $hTrace[vn], pt = $vTrace[pn];
+
+                if(isDef(aanim)){
+
+                    var tsl = ht.style;
+
+                    var trans = tsl.transition;
+                    tsl.transition = '';
+                    tsl.animation = aanim;
+
+                    setTimeout(function(){
+
+                        tsl.animation = '';
+                        tsl.transition = trans;
+                        return;
+
+                    }, aanimd);
+
+                }
+
+                pt.replaceChild(ht, $vTrace[vn]);
+
+                $vTrace[vn] = ht;
+
+                delete $hTrace[vn];
+    
+            }
+
+            var vn, $vn, $rn, vt; for(vn in $ops){
+
+                $vn = $vDOM[vn], $rn = $rDOM[vn];
+
+                /**
+                 * host node will not be managed by this dom
+                 */
+                if(vn === M.PARALLEX_VN_HOST)
+                    continue;
+
+                /**
+                 * The code below seems to be reusable
+                 * and able to be contained by a function,
+                 * yet I am still unsure if function calls
+                 * are faster then procedural code.
+                 * Instead I code it as a high performance
+                 * javascript implementation.
+                 */
+                var pn = $vn.pn
+
+                /**
+                 * No changes will be made to vns that
+                 * is currently in storage, as the updates
+                 * buffered at the virtual DOM, we assume
+                 * that no update is lost in the overall
+                 * process and could be applied when the
+                 * vn got pushed later on
+                 */
+                if(pn === M.PARALLEX_PN_STORE)
+                    continue;
+
+                /**
+                 * Implementation of hiding system
+                 * we place this below the store checking
+                 * as a stored node cannot be hidden, or replaced
+                 * with a comment node, instead when it is pushed
+                 * again to the DOM, given it's current status
+                 * in virtual DOM is hidden, it will be hidden
+                 * after it is pushed.
+                 */
+                var $cur = $ops[vn];
+
+                $vn = $vDOM[vn], $rn = $rDOM[vn];
+                vt = $vTrace[vn];
+
+                if($cur.doHide === true){
+
+                    /**
+                     * Implementation of hiding system
+                     * we place this below the store checking
+                     * as a stored node cannot be hidden, or replaced
+                     * with a comment node, instead when it is pushed
+                     * again to the DOM, given it's current status
+                     * in virtual DOM is hidden, it will be hidden
+                     * after it is pushed.
+                     */
+                    var vhid = $vn.hide, rhid = $rn.hide;
+
+                    if(vhid && rhid)
+                        continue;
+
+                    if(!vhid && rhid)
+                        showTrace(vn, pn, $vn.aanim, $vn.aanimd), $rn.hide = false;
+
+                    if(vhid && !rhid)
+                        hideTrace(vn, pn, $vn.ranim, $vn.ranimd), $rn.hide = true;
+
+                }
+
+                var $vpp = $vn.$prop;
+                var $rpp = $rn.$prop;
+                var $pp = $cur.ppAll === true ? $vpp : $cur.$pp;
+                var pp; for(pp in $pp){
+
+                    if(
+                        pp === M.PARALLEX_PP_INNERHTML && 
+                        (
+                            $vn.cns.length !== 0 ||
+                            $rn.cns.length !== 0
+                        )
+                    ){
+                        error(
+                            'Foreign invasion detected, ' +
+                            'setting innerHTML in parent ' +
+                            'node is forbidden!'
+                        );
+                        continue;
+                    }
+
+                    var vval = $vpp[pp];
+        
+                    if(vval === $rpp[pp])
+                        continue;
+        
+                    $rpp[pp] = vval;
+                    vt[pp] = vval;
+
+                }
+
+                /**
+                 * The process below is only for element nodes
+                 */
+                if($vn.type == M.PARALLEX_VN_T_TXT)
+                    continue;
+
+                var $vatt = $vn.$attrib;
+                var $ratt = $rn.$attrib;
+
+                var $att = $cur.attAll === true ? $vatt : $cur.$att;
+                var att; for(att in $att){
+
+                    var vval = $vatt[att];
+        
+                    if(vval === $ratt[att])
+                        continue;
+        
+                    $ratt[att] = vval;
+                    
+                    vt.setAttribute(key, vval);
+
+                }
+
+                var $vcl = $vn.$class;
+                var $rcl = $rn.$class;
+                var $cl = $cur.clAll === true ? $vcl : $cur.$cl;
+                var vtcl = vt.classList;
+                var cl; for(cl in $cl){
+
+                    var vval = $vcl[cl];
+                    var rval = $rcl[cl];
+        
+                    if(vval === rval)
+                        continue;
+
+                    if(vval === true)
+                        vtcl.add(cl);
+                    else
+                        vtcl.remove(cl);
+
+                }
+
+                var $vsl = $vn.$style;
+                var $rsl = $rn.$style;
+                var $sl = $cur.slAll === true ? $vsl : $cur.$sl;
+                var vtsl = vt.style;
+                var sl; for(sl in $sl){
+
+                    var vval = $vsl[sl];
+
+                    if(vval === $rsl[sl])
+                        continue;
+
+                    $rsl[sl] = vval;
+                    vtsl[sl] = vval;
+
+                }
+
+            }
+
+        }
+
+        M.prototype._parallexRevamp = function(vns){
+
+            /**
+             * A efficent revamping algorithm,
+             * this might takes more time to
+             * compute than the previous version
+             * but the DOM modification count is
+             * greatly reduced.
+             */
+            var $parallex = this.$parallex;
+
+            $vDOM = $parallex.$vDOM;
+            $rDOM = $parallex.$rDOM;
+
+            $vTrace = $parallex.$vTrace;
+
+            /**
+             * Prepare the revamp pushed buffer
+             */
+            var $rvppp = {};
+
+            /**
+             * Loop through the vns list provided
+             */
+            var i = 0, len, vn, $vn, $rn, vcs, rcs;
+            for(len = vns.length; i < len; i++){
+
+                vn = vns[i];
+                $vn = $vDOM[vn];
+
+                /**
+                 * Only an element node is allowed to be revamped
+                 */
+                if($vn.type !== M.PARALLEX_VN_T_EL)
+                    continue;
+                
+                $rn = $rDOM[vn];
+                vcs = $vn.cns, rcs = $rn.cns;
+
+                if(!vcs.length && !rcs.length)
+                    continue;
+
+                /**
+                 * Map both children list for later usage
+                 * The value contained in the map is the
+                 * current index of the child in the list
+                 */
+                var vmap = {}, rmap = {};
+                var vd, rd, vc, rc, c = 0; for(;; c++){
+                    vc = vcs[c], rc = rcs[c];
+                    vd = isDef(vc), rd = isDef(rc);
+                    if(!vd && !rd)
+                        break;
+                    if(vd) vmap[vc] = c;
+                    if(rd) rmap[rc] = c;
+                }
+
+                /**
+                 * Processed buffer for skipping
+                 */
+                var $p = {}, $apn = {};
+
+                /**
+                 * Loop through both children lists
+                 */
+                var c = 0, m = 0, n = 0, mm, nn; for(;;){
+
+                    /**
+                     * mm is the current index for the vcs,
+                     * when nn is the current index for rcs,
+                     * the m and n delta is for the skipping
+                     * of removed or appended nodes
+                     */
+                    mm = c - m, nn = c++ - n;
+                    vc = vcs[mm], rc = rcs[nn],
+
+                    /**
+                     * Get the if defined values
+                     */
+                    vd = isDef(vc), rd = isDef(rc);
+
+                    /**
+                     * Break off the loop when iteration is done
+                     */
+                    if(!vd && !rd)
+                        break;
+
+                    /**
+                     * Case: defined in render children list
+                     * when not contained within the virtual
+                     * children list,
+                     * remove the node and skip one child
+                     */
+                    if(rd && isUnDef(vmap[rc])){
+
+                        m++;
+                        vremove(vn, rc);
+                        ch = true;
+                        continue;
+
+                    }
+
+                    /**
+                     * Case: defined in virtual children list
+                     * when not contained within the render
+                     * children list,
+                     * append the node with the correct order
+                     */
+                    if(vd && isUnDef(rmap[vc])){
+
+                        n++;
+
+                        var vc1 = vcs[mm + 1];
+                        $apn[vc] = {b : vc1, p : vn};
+                        $rvppp[vc] = true;
+
+                        $p[vc] = true;
+                        ch = true;
+
+                        continue;
+                    
+                    }
+
+                    /**
+                     * Case: defined in both children list but
+                     * with their node index unmatched,
+                     * for previous processed node this will be true,
+                     * skip directly;
+                     * else push the node with the correct order
+                     */
+                    if(vd && rd && vc !== rc){
+
+                        var com0 = vmap[vc] - rmap[vc];
+                        var com1 = vmap[rc] - rmap[rc];
+
+                        if(com0 < 0) com0 = -com0;
+                        if(com1 < 0) com1 = -com1;
+
+                        if(com0 < com1){
+
+                            if(isDef($p[vc])){
+                                n++;
+                                continue;
+                            }
+    
+                            m++;
+    
+                            $p[rc] = true;
+                            var vc1 = vcs[vmap[rc] + 1];
+                            $apn[rc] = {b : vc1, p : vn};
+                            $rvppp[rc] = true;
+                            ch = true;
+    
+                            continue;
+
+                        }else{
+
+                            if(isDef($p[rc])){
+                                m++;
+                                continue;
+                            }
+    
+                            n++;
+    
+                            $p[vc] = true;
+                            var vc1 = vcs[vmap[vc] + 1];
+                            $apn[vc] = {b : vc1, p : vn};
+                            $rvppp[vc] = true;
+                            ch = true;
+    
+                            continue;
+
+                        }
+
+                    }
+
+                }
+
+                var k; for(k = vcs.length; k >= 0; k--){
+                    var vc = vcs[k];
+                    var $ = $apn[vc];
+                    if(isUnDef($))
+                        continue;
+                    vbefore(vc, $.b, $.p);
+                }
+
+                if(m || n)
+                    $rn.cns = vcs.slice();
+
+            }
+            
+            function vbefore(n, nn, p){
+
+                $rDOM[n].pn = p;
+                var t = $vTrace[n]
+                    tsl = t.style,
+                    $n = $vDOM[n],
+                    aanim = $n.aanim;
+                if(isDef(aanim) && t.nodeType === M.PARALLEX_VN_T_EL){
+                    var trans = tsl.transition;
+                    tsl.transition = '';
+                    tsl.animation = aanim;
+                    setTimeout(function(){
+                        tsl.animation = '';
+                        tsl.transition = trans;
+                        return;
+                    }, $n.aanimd);
+                }
+                if(isUnDef(nn))
+                    $vTrace[p].appendChild(t);
+                else
+                    $vTrace[p].insertBefore(t, $vTrace[nn]);
+
+            }
+
+            function vremove(p, n){
+
+                $rDOM[n].pn = M.PARALLEX_PN_STORE;
+                var t = $vTrace[n];
+                var pt = $vTrace[p];
+                var $n = $vDOM[n];
+                var ranim = $n.ranim;
+
+                if(isDef(ranim) && t.nodeType === M.PARALLEX_VN_T_EL){
+
+                    /**
+                     * The implementation of the removal
+                     * animation is to create a dummy node
+                     * to apply the animation on, when the
+                     * real node is removed instantly
+                     */
+                    var dum = t.cloneNode(true);
+                    replaceChild(pt, dum, t);
+                    dum.style.animation = ranim;
+                    setTimeout(function(){
+                        removeChild(pt, dum);
+                        return;
+                    }, $n.ranimd);
+                }else if(isUnDef($rvppp[n]))
+                    removeChild($vTrace[p], t);
+
+                if($n.pn === M.PARALLEX_PN_RMV){
+                    delete $vDOM[n];
+                    delete $rDOM[n];
+                    delete $vTrace[n];
+                    if(isDef($hTrace[n]))
+                        delete $hTrace[n];
+                }
+                
+            }
 
         }
 
