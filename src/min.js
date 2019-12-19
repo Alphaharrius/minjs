@@ -1,5 +1,5 @@
 /**
- * Min.js beta build 0.1.0
+ * min.js v0.1.0 Beta Build
  * (c) 2019 Chan Hing Nin Harry (Alphaharrius)
  * 
  * Features in this version:
@@ -26,6 +26,7 @@
  * - Migrated the Parallex DOM
  * - Upcoming work to migrate the Autoworker runtime and implement new APIs.
  * - Abandoned Autoworker for a new implementation of runtime with IntervalHandler.
+ * - Implemented one way data bindings.
  */
 
 (function(global, factory){ 
@@ -247,6 +248,7 @@
     runtimeMixin(Min);
     vnodeMixin(Min);
     vdomMixin(Min);
+    dataBind$1Mixin(Min);
 
     /**
      * A Reactive Object defines the value and attributes of
@@ -384,7 +386,7 @@
         if(invokeSetters === true){
             var $setter = this.$setter;
             for(var setter in $setter)
-                $setter[setter].call(null, this.val, oldVal);
+                $setter[setter].call(this.$min, this.val, oldVal);
         }
 
         /**
@@ -786,7 +788,7 @@
         }
 
         var stopChars = [
-            '\t', ' ', ')', '{', '}',
+            '\n', '\t', ' ', ')', '{', '}',
             '+', '-', '*', '/', '<', '>', '=',
             '!', '@', '#', '%', '^', '&', '|',
             '?', ':', '\'', '\"', ';'
@@ -894,10 +896,7 @@
         
         }
 
-        M.prototype.$compute = function(prop, comp){
-
-            if(isUndef(prop) || isUndef(comp) || !isFunction(comp))
-                return error('The given params is undefined/invalid.');
+        M.prototype._compute = function(prop, comp){
 
             var compStr = comp.toString();
             comp = comp.bind(this);
@@ -916,6 +915,18 @@
 
             var val = comp.call();
             $reactive.val = val;
+
+            return $reactive;
+
+        }
+
+        M.prototype.$compute = function(prop, comp){
+
+            if(isUndef(prop) || isUndef(comp) || !isFunction(comp))
+                return error('The given params is undefined/invalid.');
+
+            this._compute(prop, comp);
+
         }
 
         M.prototype.$watch = function(ref, handler){
@@ -1089,10 +1100,10 @@
 
                 if($p.doHide === true) $vnPatch.doHide = true;
 
-                var pp = $p.pp;
+                var pp = $p.$prop;
                 if(isDef(pp)) $vnPatch.$pp[pp] = true;
 
-                var att = $p.att;
+                var att = $p.$attrib;
                 if(isDef(att)) $vnPatch.$att[att] = true;
 
                 var cl = $p.cl;
@@ -1120,26 +1131,29 @@
 
     }
 
+    /**
+     * Parallex DOM API Implementation
+     */
     function vnodeMixin(M){
 
         function createElemNodeTrace($vn){
 
             var trace = document.createElement($vn.tag);
 
-            var $att = $vn.$attrib;
-            for(var att in $att)
-                trace.setAttribute(att, $att[att]);
-
-            var $pp = $vn.$prop;
+            var $pp = $vn.$pp;
             for(var pp in $pp)
                 trace[pp] = $pp[pp];
 
-            var $cs = $vn.$class;
+            var $att = $vn.$att;
+            for(var att in $att)
+                trace.setAttribute(att, $att[att]);
+
+            var $cs = $vn.$cl;
             var cl = trace.classList;
             for(var cs in $cs)
                 cl.add(cs);
 
-            var $sl = $vn.$style;
+            var $sl = $vn.$sl;
             var tsl = trace.style;
             for(var sl in $sl)
                 tsl[sl] = $sl[sl];
@@ -1162,13 +1176,13 @@
 
                 tag : tag,
 
-                $attrib : shallowClone($att),
+                $att : shallowClone($att),
 
-                $prop : shallowClone($pp),
+                $pp : shallowClone($pp),
 
-                $class : shallowClone($cl),
+                $cl : shallowClone($cl),
 
-                $style : shallowClone($sl),
+                $sl : shallowClone($sl),
 
                 pn : M.PARALLEX_PN_STORE,
 
@@ -1251,8 +1265,8 @@
                 return false;
 
             /**
-             * We will not use _pull because 
-             * of performance impact.
+             * We will not use _pullVnode 
+             * because of performance impact.
              */
             if($vn.pn !== M.PARALLEX_PN_STORE)
                 remove($vDOM[$vn.pn].cns, vn);
@@ -1300,8 +1314,27 @@
 
         }
 
+        M.prototype._mutateVnode = function(vn, src, key, val){
+
+            var $parallex = this.$parallex;
+            var $vDOM = $parallex.$vDOM;
+
+            var $vn = $vDOM[vn];
+
+            $vn[src][key] = val;
+
+            var $invokeParam = {};
+
+            $invokeParam[src] = key;
+            this._invokeRuntime(vn, true, $invokeParam, false);
+
+        }
+
     }
 
+    /**
+     * Parallex DOM Implementation
+     */
     function vdomMixin(M){
 
         M.PARALLEX_VN_T_EL = 1;
@@ -1566,8 +1599,8 @@
 
                 }
 
-                var $vpp = $vn.$prop;
-                var $rpp = $rn.$prop;
+                var $vpp = $vn.$pp;
+                var $rpp = $rn.$pp;
                 var $pp = $cur.ppAll === true ? $vpp : $cur.$pp;
                 var pp; for(pp in $pp){
 
@@ -1602,8 +1635,8 @@
                 if($vn.type == M.PARALLEX_VN_T_TXT)
                     continue;
 
-                var $vatt = $vn.$attrib;
-                var $ratt = $rn.$attrib;
+                var $vatt = $vn.$att;
+                var $ratt = $rn.$att;
 
                 var $att = $cur.attAll === true ? $vatt : $cur.$att;
                 var att; for(att in $att){
@@ -1619,8 +1652,8 @@
 
                 }
 
-                var $vcl = $vn.$class;
-                var $rcl = $rn.$class;
+                var $vcl = $vn.$cl;
+                var $rcl = $rn.$cl;
                 var $cl = $cur.clAll === true ? $vcl : $cur.$cl;
                 var vtcl = vt.classList;
                 var cl; for(cl in $cl){
@@ -1638,8 +1671,8 @@
 
                 }
 
-                var $vsl = $vn.$style;
-                var $rsl = $rn.$style;
+                var $vsl = $vn.$sl;
+                var $rsl = $rn.$sl;
                 var $sl = $cur.slAll === true ? $vsl : $cur.$sl;
                 var vtsl = vt.style;
                 var sl; for(sl in $sl){
@@ -1913,6 +1946,110 @@
                 }
                 
             }
+
+        }
+
+    }
+
+    /**
+     * One Way Data Binding Implemetation
+     */
+    function dataBind$1Mixin(M){
+
+        M.$mixin.$bind$1 = {
+
+            $bind$1 : {
+
+                currentBind : 0
+
+            }
+
+        }
+
+        var compileChars = [
+            '=', '+', '-', '*', '/', '!', '&', '|', '^', '%', 
+            '<', '>', '?', ':', '[', ']', '(', ')', '\'', '"'
+        ];
+
+        function isCompileChar(char){
+            return compileChars.indexOf(char) !== -1;
+        }
+
+        function processBind(str){
+
+            var isCompile = false;
+
+            var trim = '';
+            for(var i in str){
+
+                var char = str[i];
+                if(char === ' ' || char === '\t' || char === '\n')
+                    continue;
+
+                if(isCompile === false)
+                    if(isCompileChar(char))
+                        isCompile = true;
+
+                trim += char;
+
+            }
+
+            return {
+                isCompile : isCompile,
+                trim : trim
+            }
+
+        }
+
+        function compileBind($min, compRef, bind){
+
+            var current = isCompileChar(bind[0]);
+            var str = '', compiled = '';
+            for(var i = 0, len = bind.length; i <= len; i++){
+
+                var char = bind[i];
+
+                var newCurrent = isCompileChar(char)
+                if(current !== newCurrent || i === len){
+                    if(current === false && isDef($min._reactiveFromRef(str)))
+                        str = 'this.' + str;
+                    compiled += str;
+                    current = newCurrent;
+                    str = '';
+                }
+
+                str += char;
+
+            }
+
+            var comp = new Function('return ' + compiled);
+            
+            return $min._compute(compRef, comp);
+
+        }
+
+        M.prototype._bind = function(bind, vn, src, key){
+
+            var $bind$1 = this.$bind$1;
+            var currentBind = $bind$1.currentBind++;
+
+            var processed = processBind(bind);
+            var isCompile = processed.isCompile;
+            var processedBind = processed.trim;
+
+            var $reactive;
+            if(isCompile)
+                $reactive = compileBind(this, '<bindComp' + currentBind + '>', processedBind);
+            else
+                $reactive = this._reactiveFromRef(bind);
+
+            var bindSetter = function(nv){
+                this._mutateVnode(vn, src, key, nv);
+            }
+
+            bindSetter.call(this, $reactive.val);
+
+            $reactive.$setter['bind-' + currentBind] = bindSetter;
 
         }
 
