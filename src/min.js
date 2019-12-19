@@ -3,12 +3,12 @@
  * (c) 2019 Chan Hing Nin Harry (Alphaharrius)
  * 
  * Features in this version:
- * - watcher
- * - data binding
- * - data bounder
- * - conditional rendering
- * - event handler
- * - two way data binding
+ * - watcher (DONE)
+ * - data binding (DONE)
+ * - data bounder (REMOVED)
+ * - conditional rendering (DONE)
+ * - event handler (DONE)
+ * - two way data binding (PROTOTYPE)
  * - reactive content
  * 
  * The library header included a require function for 
@@ -27,6 +27,7 @@
  * - Upcoming work to migrate the Autoworker runtime and implement new APIs.
  * - Abandoned Autoworker for a new implementation of runtime with IntervalHandler.
  * - Implemented one way data bindings.
+ * - Implemented the prototype of two way bindings.
  */
 
 (function(global, factory){ 
@@ -82,13 +83,12 @@
         return m !== null && typeof m === 'function';
     }
 
-    function upush(arr, val){
+    function pushUnique(arr, val){
         if(arr.indexOf(val) === -1)
             return arr.push(val);
         return -1;
     }
 
-    
     /**
      * Only the first match will be removed
      */
@@ -246,9 +246,11 @@
      */
     watcherMixin(Min);
     runtimeMixin(Min);
+    eventMixin(Min);
     vnodeMixin(Min);
     vdomMixin(Min);
     dataBind$1Mixin(Min);
+    databind$2Mixin(Min);
 
     /**
      * A Reactive Object defines the value and attributes of
@@ -351,7 +353,8 @@
         var $reactives = this.$min.$reactives;
         var oldVal = this.oldVal;
 
-        if(this.isCompute === true){
+        if(this.isCompute === true)
+
             /**
              * The compute function is assumed 
              * to be binded to the current vm.
@@ -363,20 +366,16 @@
              */
             val = this.compute.call();
 
-            /**
-             * As compute properties will triggers
-             * a update on get, to prevent trivial
-             * updates on the vm, return the update
-             * function when the computed value is
-             * equal to the old value.
-             */
-            if(oldVal === val){
-                this.oldVal = deepClone(this.val);
-                return;
-            }
-        }
-
         if(isDef(val)){
+
+            /**
+             * To prevent trivial updates on the vm, 
+             * return the update function when the 
+             * computed value is equal to the old value.
+             */
+            if(oldVal === val)
+                return;
+
             this.val = val;
             if(this.isObject === true && this.isCompute === false)
                 this.callers = [];
@@ -563,6 +562,7 @@
                 enumerable : true,
                 configurable : true,
                 get(){
+
                     /**
                      * Set the recent Reactive be this.
                      */
@@ -570,24 +570,23 @@
 
                     if($r.isCompute)
                         $r._update(false, false);
+                        
                     return $r.val;
+
                 },
                 set(v){
-                    /**
-                     * Prevent redundant operations 
-                     * and infinite loop of cyclic
-                     * linkage.
-                     */
-                    if(v === $r.val)
-                        return;
+
                     $r._update(true, true, v);
+
                     /**
                      * Convert all sub properties
                      * into Reactive if v is type
                      * of Object.
                      */
+                    
                     if(isObject(v))
                         deep($min, v, $r);
+                    
                 }
             }
 
@@ -978,6 +977,7 @@
     IntervalHandler.prototype._call = function(){
         var _this = this;
         var subs = this.subs;
+        if(isUndef(subs)) return;
         if(isDef(this.work)){
             this.cont = true;
             return;
@@ -1066,7 +1066,7 @@
             if(isUndef($patchVnodes[vn]))
                 $patchVnodes[vn] = {
 
-                    doHide : false,
+                    anchor : false,
 
                     ppAll : false,
 
@@ -1090,7 +1090,7 @@
             
             if(p === true)
                 
-                $vnPatch.doHide = 
+                $vnPatch.anchor = 
                 $vnPatch.ppAll = 
                 $vnPatch.attAll = 
                 $vnPatch.clAll = 
@@ -1098,24 +1098,24 @@
 
             else if(isDef($p)){
 
-                if($p.doHide === true) $vnPatch.doHide = true;
+                if($p.anchor === true) $vnPatch.anchor = true;
 
-                var pp = $p.$prop;
+                var pp = $p.$pp;
                 if(isDef(pp)) $vnPatch.$pp[pp] = true;
 
-                var att = $p.$attrib;
+                var att = $p.$att;
                 if(isDef(att)) $vnPatch.$att[att] = true;
 
-                var cl = $p.cl;
+                var cl = $p.$cl;
                 if(isDef(cl)) $vnPatch.$cl[cl] = true;
 
-                var sl = $p.sl;
+                var sl = $p.$sl;
                 if(isDef(sl)) $vnPatch.$sl[sl] = true;
 
             }
 
             if(r === true)
-                revampVnodes.push(vn);
+                pushUnique(revampVnodes, vn);
 
             $runtimeHandler._call();
 
@@ -1131,6 +1131,59 @@
 
     }
 
+    function eventMixin(M){
+
+        M.$mixin.$event = {
+
+            $eventHandler : {}
+
+        }
+
+        M.prototype._addEventListener = function(vn, event, handler, intv){
+
+            var vt = this.$parallex.$vTrace[vn];
+            if(isUndef(vt))
+                return;
+
+            var $eventHandler = this.$eventHandler;
+            
+            var currentEvent = vn + ':' + event;
+            if(isDef($eventHandler[currentEvent]))
+                return;
+
+            var $eventHandler = new IntervalHandler(handler, intv);
+            $eventHandler.vt = vt;
+            this.$eventHandler[currentEvent] = $eventHandler;
+
+            vt[event] = function(){
+                $eventHandler._call();
+            };
+
+            return $eventHandler;
+
+        }
+
+        M.prototype._removeEventListener = function(vn, event){
+
+            var vt = this.$parallex.$vTrace[vn];
+            if(isUndef(vt))
+                return false;
+
+            var $eventHandler = this.$eventHandler;
+
+            var currentEvent = vn + ':' + event;
+            if(isUndef($eventHandler[currentEvent]))
+                return false;
+
+            vt[event] = undefined;
+            delete $eventHandler[currentEvent];
+
+            return true;
+
+        }
+
+    }
+
     /**
      * Parallex DOM API Implementation
      */
@@ -1138,27 +1191,27 @@
 
         function createElemNodeTrace($vn){
 
-            var trace = document.createElement($vn.tag);
+            var vt = document.createElement($vn.tag);
 
             var $pp = $vn.$pp;
             for(var pp in $pp)
-                trace[pp] = $pp[pp];
+                vt[pp] = $pp[pp];
 
             var $att = $vn.$att;
             for(var att in $att)
-                trace.setAttribute(att, $att[att]);
+                vt.setAttribute(att, $att[att]);
 
             var $cs = $vn.$cl;
-            var cl = trace.classList;
+            var cl = vt.classList;
             for(var cs in $cs)
                 cl.add(cs);
 
             var $sl = $vn.$sl;
-            var tsl = trace.style;
+            var tsl = vt.style;
             for(var sl in $sl)
                 tsl[sl] = $sl[sl];
 
-            return trace;
+            return vt;
 
         }
 
@@ -1253,8 +1306,7 @@
 
         M.prototype._pushVnode = function(vn, pn){
 
-            var $parallex = this.$parallex;
-            var $vDOM = $parallex.$vDOM;
+            var $vDOM = this.$parallex.$vDOM;
 
             if(isUndef(pn))
                 pn = M.PARALLEX_VN_HOST;
@@ -1287,8 +1339,7 @@
 
         M.prototype._pullVnode = function(vn, rmv){
 
-            var $parallex = this.$parallex;
-            var $vDOM = $parallex.$vDOM;
+            var $vDOM = this.$parallex.$vDOM;
 
             var $vn = $vDOM[vn];
 
@@ -1314,19 +1365,66 @@
 
         }
 
-        M.prototype._mutateVnode = function(vn, src, key, val){
+        M.prototype._showVnode = function(vn){
 
-            var $parallex = this.$parallex;
-            var $vDOM = $parallex.$vDOM;
+            var $vDOM = this.$parallex.$vDOM;
 
             var $vn = $vDOM[vn];
+
+            if(isUndef($vn))
+                return false;
+
+            if($vn.hide === false)
+                return false;
+
+            $vn.hide = false;
+
+            var $invokeParam = {};
+            $invokeParam.anchor = true;
+            this._invokeRuntime(vn, false, $invokeParam, false);
+
+            return true;
+
+        }
+
+        M.prototype._hideVnode = function(vn){
+
+            var $vDOM = this.$parallex.$vDOM;
+
+            var $vn = $vDOM[vn];
+
+            if(isUndef($vn))
+                return false;
+
+            if($vn.hide === true)
+                return false;
+
+            $vn.hide = true;
+
+            var $invokeParam = {};
+            $invokeParam.anchor = true;
+            this._invokeRuntime(vn, false, $invokeParam, false);
+
+            return true;
+
+        }
+
+        M.prototype._mutateVnode = function(vn, src, key, val){
+
+            var $vDOM = this.$parallex.$vDOM;
+
+            var $vn = $vDOM[vn];
+
+            if(isUndef($vn))
+                return false;
 
             $vn[src][key] = val;
 
             var $invokeParam = {};
-
             $invokeParam[src] = key;
-            this._invokeRuntime(vn, true, $invokeParam, false);
+            this._invokeRuntime(vn, false, $invokeParam, false);
+
+            return true;
 
         }
 
@@ -1347,6 +1445,11 @@
         M.PARALLEX_ATT_SL = '$style';
 
         M.PARALLEX_PP_INNERHTML = 'innerHTML';
+
+        M.PARALLEX_SRC_PP = '$pp';
+        M.PARALLEX_SRC_ATT = '$att';
+        M.PARALLEX_SRC_SL = '$sl';
+        M.PARALLEX_SRC_CL = '$cl';
 
         var ANIMS = [
             '@keyframes minfadein{from{opacity:0}to{opacity:1}}',
@@ -1443,7 +1546,7 @@
          * - must be passed, the format is as follow:
          * 
          *  $ops : {
-         *      doHide  :   BOOLEAN,
+         *      anchor  :   BOOLEAN,
          *      ppAll   :   BOOLEAN,
          *      attAll  :   BOOLEAN,
          *      clAll   :   BOOLEAN,
@@ -1575,7 +1678,7 @@
                 $vn = $vDOM[vn], $rn = $rDOM[vn];
                 vt = $vTrace[vn];
 
-                if($cur.doHide === true){
+                if($cur.anchor === true){
 
                     /**
                      * Implementation of hiding system
@@ -1659,14 +1762,15 @@
                 var cl; for(cl in $cl){
 
                     var vval = $vcl[cl];
-                    var rval = $rcl[cl];
         
-                    if(vval === rval)
+                    if(vval === $rcl[cl])
                         continue;
+
+                    $rcl[cl] = vval;
 
                     if(vval === true)
                         vtcl.add(cl);
-                    else
+                    else if(vval === false)
                         vtcl.remove(cl);
 
                 }
@@ -2039,7 +2143,7 @@
 
             var $reactive;
             if(isCompile)
-                $reactive = compileBind(this, '<bindComp' + currentBind + '>', processedBind);
+                $reactive = compileBind(this, 'bindComp:' + currentBind, processedBind);
             else
                 $reactive = this._reactiveFromRef(bind);
 
@@ -2049,7 +2153,111 @@
 
             bindSetter.call(this, $reactive.val);
 
-            $reactive.$setter['bind-' + currentBind] = bindSetter;
+            $reactive.$setter['bind:' + currentBind] = bindSetter;
+
+        }
+
+        /**
+         * Implementation of conditional rendering and the API,
+         * as it can be treated as a form of data binding, the
+         * binded value does not have to be 'true' or 'false'
+         * to trigger show or hide of the anchoring, but obeys
+         * javascript's definition of dynamic compare.
+         */
+        M.prototype._bindAnchor = function(bind, vn){
+
+            var $bind$1 = this.$bind$1;
+            var currentBind = $bind$1.currentBind++;
+
+            var processed = processBind(bind);
+            var isCompile = processed.isCompile;
+            var processedBind = processed.trim;
+
+            var $reactive;
+            if(isCompile)
+                $reactive = compileBind(this, 'bindComp:' + currentBind, processedBind);
+            else
+                $reactive = this._reactiveFromRef(bind);
+
+            var bindSetter = function(nv){
+                if(nv) this._showVnode(vn);
+                else this._hideVnode(vn);
+            }
+
+            bindSetter.call(this, $reactive.val);
+
+            $reactive.$setter['bind:' + currentBind] = bindSetter;
+
+        }
+
+    }
+
+    /**
+     * Two way Data Binding Implementation
+     */
+    function databind$2Mixin(M){
+
+        M.$mixin.$bind$2 = {
+
+            $bind$2 : {
+
+
+
+            }
+
+        }
+
+        var inputTags = [
+            'input',
+            'textarea',
+            'select',
+            'datalist',
+            'optgroup'
+        ];
+
+        var $unions = {
+
+            textarea : {unionEvent : 'oninput', lazyEvent : 'onchange', unionProp : 'value', intv : 100}
+
+        }
+
+        function isInputType(tag){
+            return inputTags.indexOf(tag) !== -1;
+        }
+
+        M.prototype._union = function(union, vn, lazy){
+
+            var $unionReactive = this._reactiveFromRef(union);
+            if(isUndef($unionReactive))
+                return false;
+            if($unionReactive.isCompute === true)
+                return false;
+            if(isDef($unionReactive.$setter.union))
+                return false;
+
+            var tag = this.$parallex.$vDOM[vn].tag;
+            if(isInputType(tag) === false)
+                return false;
+
+            var $union = $unions[tag];
+
+            var unionProp = $union.unionProp;
+            var unionHandler = function(){
+                var nv = this.vt[unionProp];
+                $unionReactive._update(true, true, nv);
+            }
+            var $eventHandler = this._addEventListener(vn, lazy === true ? 
+                $union.lazyEvent : $union.unionEvent, unionHandler, $union.intv);
+            var vt = $eventHandler.vt;
+            var unionSetter = function(nv){
+                if(vt[unionProp] === nv)
+                    return;
+                this._mutateVnode(vn, M.PARALLEX_SRC_PP, unionProp, nv);
+            }
+            unionSetter.call(this, $unionReactive.val);
+            $unionReactive.$setter.union = unionSetter;
+
+            return true;
 
         }
 
