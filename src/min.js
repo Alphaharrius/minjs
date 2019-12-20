@@ -249,8 +249,8 @@
     eventMixin(Min);
     vnodeMixin(Min);
     vdomMixin(Min);
-    dataBind$1Mixin(Min);
-    databind$2Mixin(Min);
+    dataBind1Mixin(Min);
+    databind2Mixin(Min);
 
     /**
      * A Reactive Object defines the value and attributes of
@@ -290,6 +290,11 @@
          * Whether this Reactive belongs to an Object
          */
         this.isObject = isObject(val);
+
+        /**
+         * Whether this Reactive belongs to an Array
+         */
+        this.isArray = Array.isArray(val);
 
         /**
          * The associated property.
@@ -380,6 +385,8 @@
             if(this.isObject === true && this.isCompute === false)
                 this.callers = [];
             this.isObject = isObject(val);
+            this.isArray = Array.isArray(val);
+
         }
         
         if(invokeSetters === true){
@@ -473,7 +480,10 @@
             var len = props.length;
             var $curReactive = $rootReactive;
             var c = 1; while(c < len && isDef($curReactive)){
-                $curReactive = search($curReactive, props[c++]);
+                $searchReactive = search($curReactive, props[c++]);
+                if(isUndef($searchReactive))
+                    return $curReactive;
+                $curReactive = $searchReactive;
             }
 
             return $curReactive;
@@ -615,7 +625,7 @@
                     if(isObject(val))
                         deep($min, this[idx], $reactive);
                     
-                    $arrReactive._update();
+                    $arrReactive._update(true, true);
 
                     return idx;
 
@@ -636,20 +646,6 @@
                 }
             }
 
-            /**
-             * Helper to remove a Reactive and it's associated
-             * sub Reactives completely from the vm and array.
-             */
-            function removeReactive(idx){
-                var reactive = reactiveIdxFromIdx(idx);
-                var callers = $reactives[reactive].callers;
-                for(var i in callers)
-                    delete $reactives[callers[i]];
-                delete $reactives[reactive];
-                return reactive;
-            }
-
-
             var _pop = proto.pop;
             var $pop = {
                 enumerable : false,
@@ -659,69 +655,10 @@
                     var ret = _pop.call(this);
                     if(isUndef(ret))
                         return;
-
-                    var reactive = removeReactive(this.length);
-                    remove($arrReactive.callers, reactive);
-                    $arrReactive._update();
-
-                    return ret;
-
-                }
-            }
-
-            var _shift = proto.shift;
-            var $shift = {
-                enumerable : false,
-                configurable : true,
-                value(){
-
-                    var reactives = [];
-                    for(var i = 0, len = this.length; i < len; i++){
-                        var reactive = reactiveIdxFromIdx(i);
-                        if(i != 0)
-                            delete this[i],
-                            reactives.push(reactive);
-                    }
-
-                    reactive = removeReactive(0);
-                    var ret = _shift.call(this);
-                    for(var i in reactives)
-                        define($min, arr, i, $reactives[reactives[i]]);
-
-                    remove($arrReactive.callers, reactive);
-                    $arrReactive._update();
-
-                    return ret;
                     
-                }
-            }
-
-            var _unshift = proto.unshift;
-            var $unshift = {
-                enumerable : false,
-                configurable : true,
-                value(val){
-
-                    var reactives = [];
-                    for(var i = 0, len = this.length; i < len; i++){
-                        delete this[i],
-                        reactives.push(reactiveIdxFromIdx(i));
-                    }
-
-                    var $newReactive = new Reactive($min, [$arrReactive.self], 0, val);
-                    var ret = _unshift.call(this, undefined);
-                    define($min, this, 0, $newReactive);
-
-                    if(isObject(val))
-                        deep($min, this[0], $newReactive);
-                        
-                    for(var i = 1, len = this.length; i < len; i++){
-                        var $idxReactive = $reactives[reactives[i - 1]];
-                        $idxReactive.prop = i;
-                        define($min, this, i, $idxReactive);
-                    }
-
-                    $arrReactive._update();
+                    var reactive = reactiveIdxFromIdx(this.length);
+                    remove($arrReactive.callers, reactive);
+                    $arrReactive._update(true, true);
 
                     return ret;
 
@@ -730,10 +667,40 @@
 
             Object.defineProperties(arr, {
                 push : $push,
-                pop : $pop,
-                shift : $shift,
-                unshift : $unshift
+                pop : $pop
             });
+
+            var reconstructMethods = [
+                'shift',
+                'unshift',
+                'splice',
+                'reverse'
+            ];
+
+            for(var i in reconstructMethods)
+                (function(i){
+                    var key = reconstructMethods[i];
+                    var _method = proto[key];
+
+                    Object.defineProperty(arr, key, {
+                        enumerable : false,
+                        configurable : true,
+                        value(){
+
+                            $arrReactive.callers = [];
+
+                            var temp = deepClone($arrReactive.oldVal);
+                            var ret = _method.apply(temp, arguments);
+                            $arrReactive.val = temp;
+                            deep($min, temp, $arrReactive);
+
+                            $arrReactive._update(true, true);
+
+                            return ret;
+
+                        }
+                    });
+                })(i);
 
         }
 
@@ -967,9 +934,10 @@
      * such as the invokers of DOM events or any
      * form of high frequency called functions.
      */
-    function IntervalHandler(subs, intv){
+    function IntervalHandler(subs, params, intv){
         this.intv = intv;
         this.subs = subs;
+        this.params = params;
         this.work = undefined;
         this.cont = false;
     }
@@ -984,7 +952,7 @@
         }
         this.work = setInterval(function(){
             _this.cont = false;
-            subs.call(_this);
+            subs.apply(_this, _this.params);
             if(_this.cont === false){
                 clearInterval(_this.work);
                 _this.work = undefined;
@@ -1046,7 +1014,7 @@
 
             }
 
-            var $runtimeHandler = new IntervalHandler(runtime, $runtime.runtimeInterval);
+            var $runtimeHandler = new IntervalHandler(runtime, [], $runtime.runtimeInterval);
             
             $runtimeHandler.$min = this;
             $runtimeHandler.$patchVnodes = {};
@@ -1139,7 +1107,7 @@
 
         }
 
-        M.prototype._addEventListener = function(vn, event, handler, intv){
+        M.prototype._addEventListener = function(vn, event, handler, params, intv){
 
             var vt = this.$parallex.$vTrace[vn];
             if(isUndef(vt))
@@ -1151,8 +1119,8 @@
             if(isDef($eventHandler[currentEvent]))
                 return;
 
-            var $eventHandler = new IntervalHandler(handler, intv);
-            $eventHandler.vt = vt;
+            params.unshift(vt);
+            var $eventHandler = new IntervalHandler(handler, params, intv);
             this.$eventHandler[currentEvent] = $eventHandler;
 
             vt[event] = function(){
@@ -1425,6 +1393,19 @@
             this._invokeRuntime(vn, false, $invokeParam, false);
 
             return true;
+
+        }
+
+        M.prototype._fetchFromVnode = function(vn, src, key){
+
+            var $vDOM = this.$parallex.$vDOM;
+
+            var $vn = $vDOM[vn];
+
+            if(isUndef($vn))
+                return false;
+
+            return $vn[src][key];
 
         }
 
@@ -2058,11 +2039,11 @@
     /**
      * One Way Data Binding Implemetation
      */
-    function dataBind$1Mixin(M){
+    function dataBind1Mixin(M){
 
-        M.$mixin.$bind$1 = {
+        M.$mixin.$bind1 = {
 
-            $bind$1 : {
+            $bind1 : {
 
                 currentBind : 0
 
@@ -2132,28 +2113,57 @@
 
         }
 
+        function createBindSetter($min, $reactive, currentBind, vn, src, key){
+
+            if($reactive.isObject){
+
+                var idxVal = $min._fetchFromVnode(vn, Min.PARALLEX_SRC_PP, 'value');
+                if(isUndef(idxVal)) idxVal = '[IDXVAL:bind' + currentBind + ']';
+
+                if($reactive.isArray){
+
+                    return function(newArray){
+                        var nv = newArray.indexOf(idxVal) === -1 ? false : true;
+                        this._mutateVnode(vn, src, key, nv);
+                    }
+
+                }else{
+
+                    return function(newObject){
+                        var nv = isDef(newObject[idxVal]);
+                        this._mutateVnode(vn, src, key, nv);
+                    }
+
+                }
+
+            }else
+                return function(nv){
+                    this._mutateVnode(vn, src, key, nv);
+                }
+
+        }
+
         M.prototype._bind = function(bind, vn, src, key){
 
-            var $bind$1 = this.$bind$1;
-            var currentBind = $bind$1.currentBind++;
+            var $bind1 = this.$bind1;
+            var currentBind = $bind1.currentBind++;
 
             var processed = processBind(bind);
             var isCompile = processed.isCompile;
             var processedBind = processed.trim;
 
-            var $reactive;
             if(isCompile)
-                $reactive = compileBind(this, 'bindComp:' + currentBind, processedBind);
+                var $reactive = compileBind(this, 'bindComp:' + currentBind, processedBind);
             else
-                $reactive = this._reactiveFromRef(bind);
+                var $reactive = this._reactiveFromRef(bind);
 
-            var bindSetter = function(nv){
-                this._mutateVnode(vn, src, key, nv);
-            }
+            var bindSetter = createBindSetter(this, $reactive, currentBind, vn, src, key);
 
             bindSetter.call(this, $reactive.val);
 
             $reactive.$setter['bind:' + currentBind] = bindSetter;
+
+            return true;
 
         }
 
@@ -2166,18 +2176,20 @@
          */
         M.prototype._bindAnchor = function(bind, vn){
 
-            var $bind$1 = this.$bind$1;
-            var currentBind = $bind$1.currentBind++;
+            var $bind1 = this.$bind1;
+            var currentBind = $bind1.currentBind++;
 
             var processed = processBind(bind);
             var isCompile = processed.isCompile;
             var processedBind = processed.trim;
 
-            var $reactive;
             if(isCompile)
-                $reactive = compileBind(this, 'bindComp:' + currentBind, processedBind);
+                var $reactive = compileBind(this, 'bindComp:' + currentBind, processedBind);
             else
-                $reactive = this._reactiveFromRef(bind);
+                var $reactive = this._reactiveFromRef(bind);
+
+            if($reactive.isObject)
+                return false;
 
             var bindSetter = function(nv){
                 if(nv) this._showVnode(vn);
@@ -2188,6 +2200,8 @@
 
             $reactive.$setter['bind:' + currentBind] = bindSetter;
 
+            return true;
+
         }
 
     }
@@ -2195,67 +2209,95 @@
     /**
      * Two way Data Binding Implementation
      */
-    function databind$2Mixin(M){
+    function databind2Mixin(M){
 
-        M.$mixin.$bind$2 = {
+        M.$databind2 = {
+            $models : {
 
-            $bind$2 : {
+                'input.text' : {event : 'oninput', transmit : 'element.value', receive : 'value', interval : 100, $hook : {}},
+                'input.text:lazy' : {event : 'onchange', transmit : 'element.value', receive : 'value', interval : 100, $hook : {}},
 
+                'input.number' : {event : 'oninput', transmit : 'element.value', receive : 'value', interval : 100, $hook : {}},
+                'input.number:lazy' : {event : 'onchange', transmit : 'element.value', receive : 'value', interval : 100, $hook : {}},
 
+                'input.email' : {event : 'oninput', transmit : 'element.value', receive : 'value', interval : 100, $hook : {}},
+                'input.email:lazy' : {event : 'onchange', transmit : 'element.value', receive : 'value', interval : 100, $hook : {}},
+
+                'input.password' : {event : 'oninput', transmit : 'element.value', receive : 'value', interval : 100, $hook : {}},
+                'input.password:lazy' : {event : 'onchange', transmit : 'element.value', receive : 'value', interval : 100, $hook : {}},
+
+                'input.checkbox' : {event : 'onchange', transmit : 'element.checked', receive : 'checked', interval : 25, $hook : {
+                    array : function(array, transmit, idxVal){
+                        var idxOf = array.indexOf(idxVal);
+                        if(transmit === true)
+                            array.push(idxVal)
+                        else if(idxOf !== -1)
+                            array.splice(idxOf, 1);
+                    }
+                }},
+
+                'textarea' : {event : 'oninput', transmit : 'element.value', receive : 'value', interval : 100, $hook : {}},
+                'textarea:lazy' : {event : 'onchange', transmit : 'element.value', receive : 'value', interval : 25, $hook : {}},
+            }
+        }
+
+        M._insertModel = 
+            function(
+                modelTag, modelType, 
+                modelPrefix, modelEvent, 
+                modelTransmit, modelReceive, 
+                modelInterval, $modelHook
+            ){
+
+                var model = modelTag + modelType ? 
+                    '.' + modelType : '' + modelPrefix ? 
+                    ':' + modelPrefix : '';
+                this.$databind2.$models[model] = {
+                    event : modelEvent,
+                    transmit : modelTransmit,
+                    receive : modelReceive,
+                    interval : modelInterval,
+                    $hook : $modelHook
+                }
 
             }
 
-        }
+        M.prototype._model = function(model, union, vn){
 
-        var inputTags = [
-            'input',
-            'textarea',
-            'select',
-            'datalist',
-            'optgroup'
-        ];
+            var $model = M.$databind2.$models[model];
+            var $reactive = this._reactiveFromRef(union);
 
-        var $unions = {
+            var transmitter = new Function('element', 'return ' + $model.transmit);
 
-            textarea : {unionEvent : 'oninput', lazyEvent : 'onchange', unionProp : 'value', intv : 100}
+            var beforeHook = $model.$hook.before;
+            var arrayHook = $model.$hook.array;
+            var afterHook = $model.$hook.after;
 
-        }
-
-        function isInputType(tag){
-            return inputTags.indexOf(tag) !== -1;
-        }
-
-        M.prototype._union = function(union, vn, lazy){
-
-            var $unionReactive = this._reactiveFromRef(union);
-            if(isUndef($unionReactive))
-                return false;
-            if($unionReactive.isCompute === true)
-                return false;
-            if(isDef($unionReactive.$setter.union))
-                return false;
-
-            var tag = this.$parallex.$vDOM[vn].tag;
-            if(isInputType(tag) === false)
-                return false;
-
-            var $union = $unions[tag];
-
-            var unionProp = $union.unionProp;
-            var unionHandler = function(){
-                var nv = this.vt[unionProp];
-                $unionReactive._update(true, true, nv);
+            if($reactive.isObject){
+                var vnIdxVal = this._fetchFromVnode(vn, Min.PARALLEX_SRC_PP, 'value');
+                if(isUndef(vnIdxVal)) return false;
             }
-            var $eventHandler = this._addEventListener(vn, lazy === true ? 
-                $union.lazyEvent : $union.unionEvent, unionHandler, $union.intv);
-            var vt = $eventHandler.vt;
-            var unionSetter = function(nv){
-                if(vt[unionProp] === nv)
-                    return;
-                this._mutateVnode(vn, M.PARALLEX_SRC_PP, unionProp, nv);
+
+            var eventHandler = function(element){
+
+                if(isDef(beforeHook))
+                    beforeHook(this.$min, vn);
+
+                var transmit = transmitter(element);
+
+                if($reactive.isArray === true){
+                    if(isDef(arrayHook))
+                        arrayHook($reactive.val, transmit, vnIdxVal, this.$min, vn);
+                }else
+                    $reactive._update(true, true, transmit);
+
+                if(isDef(afterHook))
+                    afterHook(this.$min, transmit, vn);
+
             }
-            unionSetter.call(this, $unionReactive.val);
-            $unionReactive.$setter.union = unionSetter;
+
+            this._addEventListener(vn, $model.event, eventHandler, [], $model.interval);
+            this._bind(union, vn, Min.PARALLEX_SRC_PP, $model.receive);
 
             return true;
 
