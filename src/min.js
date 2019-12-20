@@ -28,6 +28,8 @@
  * - Abandoned Autoworker for a new implementation of runtime with IntervalHandler.
  * - Implemented one way data bindings.
  * - Implemented the prototype of two way bindings.
+ * - Todo: Implement the Vnode Template Init API.
+ * - Todo: Reduce Variable Length and extract helper methods.
  */
 
 (function(global, factory){ 
@@ -1210,6 +1212,12 @@
 
         function createElemNode(tag, $att, $pp, $cl, $sl){
 
+            /**
+             * Anchor System is placed within the property
+             * to combine show/hide with _mutateVnode.
+             */
+            $pp.anchor = false;
+
             return {
 
                 type : M.PARALLEX_VN_T_EL,
@@ -1226,9 +1234,7 @@
 
                 pn : M.PARALLEX_PN_STORE,
 
-                cns : [],
-
-                hide : false
+                cns : []
 
             }
 
@@ -1242,13 +1248,17 @@
 
                 $pp : {
 
+                    /**
+                     * Anchor System is placed within the property
+                     * to combine show/hide with _mutateVnode.
+                     */
+                    anchor : false,
+
                     textContent : content
 
                 },
 
-                pn : M.PARALLEX_PN_STORE,
-
-                hide : false
+                pn : M.PARALLEX_PN_STORE
 
             }
 
@@ -1352,50 +1362,6 @@
 
         }
 
-        M.prototype._showVnode = function(vn){
-
-            var $vDOM = this.$parallex.$vDOM;
-
-            var $vn = $vDOM[vn];
-
-            if(isUndef($vn))
-                return false;
-
-            if($vn.hide === false)
-                return false;
-
-            $vn.hide = false;
-
-            var $invokeParam = {};
-            $invokeParam.anchor = true;
-            this._invokeRuntime(vn, false, $invokeParam, false);
-
-            return true;
-
-        }
-
-        M.prototype._hideVnode = function(vn){
-
-            var $vDOM = this.$parallex.$vDOM;
-
-            var $vn = $vDOM[vn];
-
-            if(isUndef($vn))
-                return false;
-
-            if($vn.hide === true)
-                return false;
-
-            $vn.hide = true;
-
-            var $invokeParam = {};
-            $invokeParam.anchor = true;
-            this._invokeRuntime(vn, false, $invokeParam, false);
-
-            return true;
-
-        }
-
         M.prototype._mutateVnode = function(vn, src, key, val){
 
             var $vDOM = this.$parallex.$vDOM;
@@ -1442,14 +1408,13 @@
         M.PARALLEX_PN_RMV = -3;
         M.PARALLEX_VN_HOST = -1;
 
-        M.PARALLEX_ATT_SL = '$style';
-
-        M.PARALLEX_PP_INNERHTML = 'innerHTML';
-
         M.PARALLEX_SRC_PP = '$pp';
         M.PARALLEX_SRC_ATT = '$att';
         M.PARALLEX_SRC_SL = '$sl';
         M.PARALLEX_SRC_CL = '$cl';
+
+        M.PARALLEX_PP_ANCHOR = 'anchor';
+        M.PARALLEX_PP_INNERHTML = 'innerHTML';
 
         var ANIMS = [
             '@keyframes minfadein{from{opacity:0}to{opacity:1}}',
@@ -1678,10 +1643,13 @@
                 $vn = $vDOM[vn], $rn = $rDOM[vn];
                 vt = $vTrace[vn];
 
+                var $vpp = $vn.$pp;
+                var $rpp = $rn.$pp;
+
                 if($cur.anchor === true){
 
                     /**
-                     * Implementation of hiding system
+                     * Implementation of anchoring system
                      * we place this below the store checking
                      * as a stored node cannot be hidden, or replaced
                      * with a comment node, instead when it is pushed
@@ -1689,23 +1657,27 @@
                      * in virtual DOM is hidden, it will be hidden
                      * after it is pushed.
                      */
-                    var vhid = $vn.hide, rhid = $rn.hide;
+                    var vhid = $vpp.anchor, rhid = $rpp.anchor;
 
                     if(vhid && rhid)
                         continue;
 
                     if(!vhid && rhid)
-                        showTrace(vn, pn, $vn.aanim, $vn.aanimd), $rn.hide = false;
+                        showTrace(vn, pn, $vn.aanim, $vn.aanimd), $rpp.anchor = false;
 
                     if(vhid && !rhid)
-                        hideTrace(vn, pn, $vn.ranim, $vn.ranimd), $rn.hide = true;
+                        hideTrace(vn, pn, $vn.ranim, $vn.ranimd), $rpp.anchor = true;
 
                 }
 
-                var $vpp = $vn.$pp;
-                var $rpp = $rn.$pp;
                 var $pp = $cur.ppAll === true ? $vpp : $cur.$pp;
                 var pp; for(pp in $pp){
+
+                    /**
+                     * Anchoring is done above.
+                     */
+                    if(pp === M.PARALLEX_PP_ANCHOR)
+                        continue;
 
                     if(
                         pp === M.PARALLEX_PP_INNERHTML && 
@@ -2028,7 +2000,7 @@
                     /**
                      * The implementation of the removal
                      * animation is to create a dummy node
-                     * to apply the animation on, when the
+                     * to apply the animation, when the
                      * real node is removed instantly
                      */
                     var dum = t.cloneNode(true);
@@ -2186,43 +2158,6 @@
 
         }
 
-        /**
-         * Implementation of conditional rendering and the API,
-         * as it can be treated as a form of data binding, the
-         * binded value does not have to be 'true' or 'false'
-         * to trigger show or hide of the anchoring, but obeys
-         * javascript's definition of dynamic compare.
-         */
-        M.prototype._bindAnchor = function(bind, vn){
-
-            var $bind1 = this.$bind1;
-            var currentBind = $bind1.currentBind++;
-
-            var processed = processBind(bind);
-            var isCompile = processed.isCompile;
-            var processedBind = processed.trim;
-
-            if(isCompile)
-                var $reactive = compileBind(this, 'bindComp:' + currentBind, processedBind);
-            else
-                var $reactive = this._reactiveFromRef(bind);
-
-            if($reactive.isObject)
-                return false;
-
-            var bindSetter = function(nv){
-                if(nv) this._showVnode(vn);
-                else this._hideVnode(vn);
-            }
-
-            bindSetter.call(this, $reactive.val);
-
-            $reactive.$setter['bind:' + currentBind] = bindSetter;
-
-            return true;
-
-        }
-
     }
 
     /**
@@ -2283,7 +2218,7 @@
                     event : 'onchange', 
                     transmit : 'element.checked ? element.value : undefined', 
                     union : 'checked', 
-                    receive : '=== static ? true : false',
+                    receive : '=== static ? true : false', 
                     static : 'value', 
                     interval : 15, 
                     $hook : {}
