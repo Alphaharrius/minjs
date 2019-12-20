@@ -355,7 +355,15 @@
      */
     Reactive.prototype._update = function(updateListeners, invokeSetters, val){
 
-        var $reactives = this.$min.$reactives;
+        var $min = this.$min;
+
+        /**
+         * Run Reactive Garbage Collection if update count exceed 32.
+         */
+        if($min.currentReactiveUpdateCount++ >= 32)
+            $min.currentReactiveUpdateCount = 0, $min._watcherMASGC();
+
+        var $reactives = $min.$reactives;
         var oldVal = this.oldVal;
 
         if(this.isCompute === true)
@@ -437,7 +445,12 @@
             /**
              * This stores the root Reactives
              */
-            rootReactives : []
+            rootReactives : [],
+
+            /**
+             * Counts the update for the current GC Cycle
+             */
+            currentReactiveUpdateCount : 0
 
         }
 
@@ -972,6 +985,8 @@
 
             $runtime : {
 
+                enabled : false,
+
                 $runtimeHandler : undefined,
 
                 runtimeInterval : 25
@@ -1026,7 +1041,11 @@
 
         M.prototype._invokeRuntime = function(vn, p, $p, r){
 
-            var $runtimeHandler = this.$runtime.$runtimeHandler;
+            var $runtime = this.$runtime;
+            if($runtime.enabled === false)
+                return;
+
+            var $runtimeHandler = $runtime.$runtimeHandler;
 
             var $patchVnodes = $runtimeHandler.$patchVnodes;
             var revampVnodes = $runtimeHandler.revampVnodes;
@@ -1221,7 +1240,7 @@
 
                 type : M.PARALLEX_VN_T_TXT,
 
-                $prop : {
+                $pp : {
 
                     textContent : content
 
@@ -2211,33 +2230,65 @@
      */
     function databind2Mixin(M){
 
+        var $textModel = {
+            event : 'oninput', 
+            transmit : 'element.value', 
+            receive : 'value', 
+            interval : 15
+        }
+
+        var $textModelLazy = {
+            event : 'onchange', 
+            transmit : 'element.value', 
+            receive : 'value', 
+            interval : 15
+        }
+
         M.$databind2 = {
             $models : {
 
-                'input.text' : {event : 'oninput', transmit : 'element.value', receive : 'value', interval : 100, $hook : {}},
-                'input.text:lazy' : {event : 'onchange', transmit : 'element.value', receive : 'value', interval : 100, $hook : {}},
+                'input.text' : $textModel,
+                'input.text:lazy' : $textModelLazy,
 
-                'input.number' : {event : 'oninput', transmit : 'element.value', receive : 'value', interval : 100, $hook : {}},
-                'input.number:lazy' : {event : 'onchange', transmit : 'element.value', receive : 'value', interval : 100, $hook : {}},
+                'input.number' : $textModel,
+                'input.number:lazy' : $textModelLazy,
 
-                'input.email' : {event : 'oninput', transmit : 'element.value', receive : 'value', interval : 100, $hook : {}},
-                'input.email:lazy' : {event : 'onchange', transmit : 'element.value', receive : 'value', interval : 100, $hook : {}},
+                'input.email' : $textModel,
+                'input.email:lazy' : $textModelLazy,
 
-                'input.password' : {event : 'oninput', transmit : 'element.value', receive : 'value', interval : 100, $hook : {}},
-                'input.password:lazy' : {event : 'onchange', transmit : 'element.value', receive : 'value', interval : 100, $hook : {}},
+                'input.password' : $textModel,
+                'input.password:lazy' : $textModelLazy,
 
-                'input.checkbox' : {event : 'onchange', transmit : 'element.checked', receive : 'checked', interval : 25, $hook : {
-                    array : function(array, transmit, idxVal){
-                        var idxOf = array.indexOf(idxVal);
-                        if(transmit === true)
-                            array.push(idxVal)
-                        else if(idxOf !== -1)
-                            array.splice(idxOf, 1);
+                'textarea' : $textModel,
+                'textarea:lazy' : $textModelLazy,
+
+                'input.checkbox' : {
+                    event : 'onchange', 
+                    transmit : 'element.checked', 
+                    receive : 'checked', 
+                    static : 'value', 
+                    interval : 15, 
+                    $hook : {
+                        array : function(array, transmit, static){
+                            var idxOf = array.indexOf(static);
+                            if(transmit === true)
+                                array.push(static)
+                            else if(idxOf !== -1)
+                                array.splice(idxOf, 1);
+                        }
                     }
-                }},
+                },
 
-                'textarea' : {event : 'oninput', transmit : 'element.value', receive : 'value', interval : 100, $hook : {}},
-                'textarea:lazy' : {event : 'onchange', transmit : 'element.value', receive : 'value', interval : 25, $hook : {}},
+                'input.radio' : {
+                    event : 'onchange', 
+                    transmit : 'element.checked ? element.value : undefined', 
+                    receive : 'checked', 
+                    receiveFilter : '=== static ? true : false', 
+                    static : 'value',
+                    interval : 15, 
+                    $hook : {}
+                }
+
             }
         }
 
@@ -2262,6 +2313,12 @@
 
             }
 
+        function compileReceiveFilter(str, static){
+            if(isNaN(static))
+                static = '"' + static + '"';
+            return str.replace('static', static);
+        }
+
         M.prototype._model = function(model, union, vn){
 
             var $model = M.$databind2.$models[model];
@@ -2269,14 +2326,16 @@
 
             var transmitter = new Function('element', 'return ' + $model.transmit);
 
-            var beforeHook = $model.$hook.before;
-            var arrayHook = $model.$hook.array;
-            var afterHook = $model.$hook.after;
-
-            if($reactive.isObject){
-                var vnIdxVal = this._fetchFromVnode(vn, Min.PARALLEX_SRC_PP, 'value');
-                if(isUndef(vnIdxVal)) return false;
+            var $hook = $model.$hook;
+            if(isDef($hook)){
+                var beforeHook = $hook.before;
+                var arrayHook = $hook.array;
+                var afterHook = $hook.after;
             }
+
+            var static = this._fetchFromVnode(vn, Min.PARALLEX_SRC_PP, $model.static);
+            if($reactive.isObject && isUndef(static))
+                return false;
 
             var eventHandler = function(element){
 
@@ -2287,7 +2346,7 @@
 
                 if($reactive.isArray === true){
                     if(isDef(arrayHook))
-                        arrayHook($reactive.val, transmit, vnIdxVal, this.$min, vn);
+                        arrayHook($reactive.val, transmit, static);
                 }else
                     $reactive._update(true, true, transmit);
 
@@ -2297,6 +2356,11 @@
             }
 
             this._addEventListener(vn, $model.event, eventHandler, [], $model.interval);
+
+            var receiveFilter = $model.receiveFilter;
+            if(isDef(receiveFilter) && isDef(static))
+                union = compileReceiveFilter(union + receiveFilter, static);
+
             this._bind(union, vn, Min.PARALLEX_SRC_PP, $model.receive);
 
             return true;
