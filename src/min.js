@@ -2233,14 +2233,14 @@
         var $textModel = {
             event : 'oninput', 
             transmit : 'element.value', 
-            receive : 'value', 
+            union : 'value', 
             interval : 15
         }
 
         var $textModelLazy = {
             event : 'onchange', 
             transmit : 'element.value', 
-            receive : 'value', 
+            union : 'value', 
             interval : 15
         }
 
@@ -2265,7 +2265,7 @@
                 'input.checkbox' : {
                     event : 'onchange', 
                     transmit : 'element.checked', 
-                    receive : 'checked', 
+                    union : 'checked', 
                     static : 'value', 
                     interval : 15, 
                     $hook : {
@@ -2282,9 +2282,9 @@
                 'input.radio' : {
                     event : 'onchange', 
                     transmit : 'element.checked ? element.value : undefined', 
-                    receive : 'checked', 
-                    receiveFilter : '=== static ? true : false', 
-                    static : 'value',
+                    union : 'checked', 
+                    receive : '=== static ? true : false',
+                    static : 'value', 
                     interval : 15, 
                     $hook : {}
                 }
@@ -2292,28 +2292,7 @@
             }
         }
 
-        M._insertModel = 
-            function(
-                modelTag, modelType, 
-                modelPrefix, modelEvent, 
-                modelTransmit, modelReceive, 
-                modelInterval, $modelHook
-            ){
-
-                var model = modelTag + modelType ? 
-                    '.' + modelType : '' + modelPrefix ? 
-                    ':' + modelPrefix : '';
-                this.$databind2.$models[model] = {
-                    event : modelEvent,
-                    transmit : modelTransmit,
-                    receive : modelReceive,
-                    interval : modelInterval,
-                    $hook : $modelHook
-                }
-
-            }
-
-        function compileReceiveFilter(str, static){
+        function compileReceive(str, static){
             if(isNaN(static))
                 static = '"' + static + '"';
             return str.replace('static', static);
@@ -2357,11 +2336,11 @@
 
             this._addEventListener(vn, $model.event, eventHandler, [], $model.interval);
 
-            var receiveFilter = $model.receiveFilter;
-            if(isDef(receiveFilter) && isDef(static))
-                union = compileReceiveFilter(union + receiveFilter, static);
+            var receive = $model.receive;
+            if(isDef(receive) && isDef(static))
+                union = compileReceive(union + receive, static);
 
-            this._bind(union, vn, Min.PARALLEX_SRC_PP, $model.receive);
+            this._bind(union, vn, Min.PARALLEX_SRC_PP, $model.union);
 
             return true;
 
