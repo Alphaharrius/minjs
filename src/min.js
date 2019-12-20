@@ -1055,8 +1055,6 @@
             if(isUndef($patchVnodes[vn]))
                 $patchVnodes[vn] = {
 
-                    anchor : false,
-
                     ppAll : false,
 
                     attAll : false,
@@ -1078,16 +1076,12 @@
             var $vnPatch = $patchVnodes[vn];
             
             if(p === true)
-                
-                $vnPatch.anchor = 
                 $vnPatch.ppAll = 
                 $vnPatch.attAll = 
                 $vnPatch.clAll = 
                 $vnPatch.slAll = true;
 
             else if(isDef($p)){
-
-                if($p.anchor === true) $vnPatch.anchor = true;
 
                 var pp = $p.$pp;
                 if(isDef(pp)) $vnPatch.$pp[pp] = true;
@@ -1646,7 +1640,8 @@
                 var $vpp = $vn.$pp;
                 var $rpp = $rn.$pp;
 
-                if($cur.anchor === true){
+                var $pp = $cur.ppAll === true ? $vpp : $cur.$pp;
+                if($pp.anchor === true){
 
                     /**
                      * Implementation of anchoring system
@@ -1670,7 +1665,6 @@
 
                 }
 
-                var $pp = $cur.ppAll === true ? $vpp : $cur.$pp;
                 var pp; for(pp in $pp){
 
                     /**
