@@ -772,7 +772,7 @@
             '\n', '\t', ' ', ')', '{', '}',
             '+', '-', '*', '/', '<', '>', '=',
             '!', '@', '#', '%', '^', '&', '|',
-            '?', ':', '\'', '\"', ';'
+            '?', ':', '\'', '\"', ';', ','
         ];
 
         function isStopChar(char){
@@ -1372,6 +1372,19 @@
             this._invokeRuntime(vn, false, $invokeParam, false);
 
             return true;
+
+        }
+
+        M.prototype._traceFromVnode = function(vn){
+
+            var trace = this.$parallex.$vTrace[vn];
+            if(isUndef(trace))
+                return error(
+                    'The given vnode:' + vn +
+                    ' is not found within the ' + 
+                    'current virtual DOM.'
+                );
+            return trace;
 
         }
 
@@ -2038,7 +2051,7 @@
 
         var compileChars = [
             '=', '+', '-', '*', '/', '!', '&', '|', '^', '%', 
-            '<', '>', '?', ':', '[', ']', '(', ')', '\'', '"'
+            '<', '>', '?', ':', '[', ']', '(', ')', '\'', '"', ','
         ];
 
         function isCompileChar(char){
@@ -2071,7 +2084,16 @@
 
         }
 
-        function compileBind($min, compRef, bind){
+        function injectToString(str, $inject){
+            for(var key in $inject){
+                var val = $inject[key];
+                val = isNaN(val) ? '"' + val + '"' : val;
+                str = str.replace('${' + key + '}', val);
+            }
+            return str;
+        }
+
+        function compileBind($min, compRef, bind, $inject){
 
             var current = isCompileChar(bind[0]);
             var str = '', compiled = '';
@@ -2092,13 +2114,22 @@
 
             }
 
+            if(isDef($inject))
+                compiled = injectToString(compiled, $inject);
+
             var comp = new Function('return ' + compiled);
             
             return $min._compute(compRef, comp);
 
         }
 
-        function createBindSetter($min, $reactive, currentBind, vn, src, key){
+        function createBindSetter($min, $reactive, currentBind, bindFilter, filterParams, vn, src, key){
+
+            function callBindFilter($min, bindFilter, filterParams, nv){
+                var params = filterParams.slice();
+                params.unshift(nv);
+                return bindFilter.apply($min, params);
+            }
 
             if($reactive.isObject){
 
@@ -2109,6 +2140,8 @@
 
                     return function(newArray){
                         var nv = newArray.indexOf(idxVal) === -1 ? false : true;
+                        if(isDef(bindFilter))
+                            nv = callBindFilter($min, bindFilter, filterParams, nv);
                         this._mutateVnode(vn, src, key, nv);
                     }
 
@@ -2116,6 +2149,8 @@
 
                     return function(newObject){
                         var nv = isDef(newObject[idxVal]);
+                        if(isDef(bindFilter))
+                            nv = callBindFilter($min, bindFilter, filterParams, nv);
                         this._mutateVnode(vn, src, key, nv);
                     }
 
@@ -2123,12 +2158,40 @@
 
             }else
                 return function(nv){
+                    if(isDef(bindFilter))
+                        nv = callBindFilter($min, bindFilter, filterParams, nv);
                     this._mutateVnode(vn, src, key, nv);
                 }
 
         }
 
-        M.prototype._bind = function(bind, vn, src, key){
+        function fetchInjectsFromStr(str){
+            var injects = [];
+            for(var i = 0, len = str.length; i < len; i++){
+                if(str[i] !== '$' || str[i + 1] !== '{')
+                    continue;
+                var c = 2, char = str[i + c], inject = ''; while(char !== '}'){
+                    if(i + c < len)
+                        inject += char, char = str[i + ++c];
+                    else
+                        return injects;
+                }
+                injects.push(inject);
+                i += c;
+            }
+            return injects;
+        }
+
+        function processInjects($min, vn, injects){
+            var $inject = {};
+            for(var i in injects){
+                var inject = injects[i];
+                $inject[inject] = $min._fetchFromVnode(vn, M.PARALLEX_SRC_PP, inject);
+            }
+            return $inject;
+        }
+
+        M.prototype._bind = function(bind, vn, src, key, $filter){
 
             var $bind1 = this.$bind1;
             var currentBind = $bind1.currentBind++;
@@ -2137,12 +2200,21 @@
             var isCompile = processed.isCompile;
             var processedBind = processed.trim;
 
+            var injects = fetchInjectsFromStr(processedBind);
+            if(isDef(injects.length !== 0))
+                var $inject = processInjects(this, vn, injects);
+
             if(isCompile)
-                var $reactive = compileBind(this, 'bindComp:' + currentBind, processedBind);
+                var $reactive = compileBind(this, 'bindComp:' + currentBind, processedBind, $inject);
             else
                 var $reactive = this._reactiveFromRef(bind);
+            
+            if(isDef($filter))
+                var filter = $filter.filter, params = $filter.params;
 
-            var bindSetter = createBindSetter(this, $reactive, currentBind, vn, src, key);
+            var bindSetter = createBindSetter(
+                this, $reactive, currentBind, 
+                filter, params, vn, src, key);
 
             bindSetter.call(this, $reactive.val);
 
@@ -2155,24 +2227,55 @@
     }
 
     /**
-     * Two way Data Binding Implementation
+     * Two-way Data Binding Implementation
      */
     function databind2Mixin(M){
 
         var $textModel = {
             event : 'oninput', 
-            transmit : 'element.value', 
-            union : 'value', 
+            transmit(element){
+                return element.value;
+            }, 
+            receive : 'value', 
             interval : 15
         }
 
         var $textModelLazy = {
             event : 'onchange', 
-            transmit : 'element.value', 
-            union : 'value', 
+            transmit(element){
+                return element.value;
+            },
+            receive : 'value', 
             interval : 15
         }
 
+        /**
+         * Min Two-Way Data Binding Model
+         *  - key : [tagName].[type]:[prefix]
+         *  - event : DOMEvents
+         *  - transmit : The function that returns the value passes to the model.
+         *  - filter : The function that process the received value from the model.
+         *  - filter(string) : This can be a string that uses the Bind Injection.
+         *  - receive : The property that receives value returns by the filter.
+         *  - fixed : A property that represents the View Model.
+         *  - interval : The invoking interval of this Model.
+         *  - $hook : The hook handlers that invokes during event.
+         * 
+         *  - transmit function:
+         *    - param : element => The HTMLElement that host the Model.
+         *  - filter function:
+         *    - param : nv => The new value passed from the model.
+         *    - param : fixed => The fixed value of this model.
+         *    - param : element => The host element of this model.
+         *  - '$hook' Set:
+         *    - handler : before($min, vn) 
+         *        => Invokes before the event.
+         *    - handler : array(array, transmit, fixed) 
+         *        => Invokes during transmit
+         *        => Invokes only if the Model models to Array type
+         *    - handler : after($min, transmit, vn) 
+         *        => Invokes after the event.
+         */
         M.$databind2 = {
             $models : {
 
@@ -2188,20 +2291,24 @@
                 'input.password' : $textModel,
                 'input.password:lazy' : $textModelLazy,
 
+                'input.date' : $textModelLazy,
+
                 'textarea' : $textModel,
                 'textarea:lazy' : $textModelLazy,
 
                 'input.checkbox' : {
                     event : 'onchange', 
-                    transmit : 'element.checked', 
-                    union : 'checked', 
-                    static : 'value', 
+                    transmit(element){
+                        return element.checked;
+                    }, 
+                    receive : 'checked', 
+                    fixed : 'value', 
                     interval : 15, 
                     $hook : {
-                        array : function(array, transmit, static){
-                            var idxOf = array.indexOf(static);
+                        array(array, transmit, fixed){
+                            var idxOf = array.indexOf(fixed);
                             if(transmit === true)
-                                array.push(static)
+                                array.push(fixed)
                             else if(idxOf !== -1)
                                 array.splice(idxOf, 1);
                         }
@@ -2210,21 +2317,35 @@
 
                 'input.radio' : {
                     event : 'onchange', 
-                    transmit : 'element.checked ? element.value : undefined', 
-                    union : 'checked', 
-                    receive : '=== static ? true : false', 
-                    static : 'value', 
-                    interval : 15, 
+                    transmit(element){
+                        return element.checked === true ? element.value : undefined;
+                    }, 
+                    filter : '===${value}?true:false',
+                    receive : 'checked', 
+                    fixed : 'value', 
+                    interval : 15,
+                    $hook : {}
+                },
+
+                'select' : {
+                    event : 'onchange',
+                    transmit(element){
+                        return element.options[element.selectedIndex].value;
+                    },
+                    receive : 'selectedIndex',
+                    filter(nv, noop, element){
+                        var options = element.options;
+                        for(var i in options){
+                            var option = options[i];
+                            if(option.value === nv)
+                                return i;
+                        }
+                    },
+                    interval : 15,
                     $hook : {}
                 }
 
             }
-        }
-
-        function compileReceive(str, static){
-            if(isNaN(static))
-                static = '"' + static + '"';
-            return str.replace('static', static);
         }
 
         M.prototype._model = function(model, union, vn){
@@ -2232,7 +2353,7 @@
             var $model = M.$databind2.$models[model];
             var $reactive = this._reactiveFromRef(union);
 
-            var transmitter = new Function('element', 'return ' + $model.transmit);
+            var transmitter = $model.transmit;
 
             var $hook = $model.$hook;
             if(isDef($hook)){
@@ -2241,8 +2362,8 @@
                 var afterHook = $hook.after;
             }
 
-            var static = this._fetchFromVnode(vn, Min.PARALLEX_SRC_PP, $model.static);
-            if($reactive.isObject && isUndef(static))
+            var fixed = this._fetchFromVnode(vn, Min.PARALLEX_SRC_PP, $model.fixed);
+            if($reactive.isObject && isUndef(fixed))
                 return false;
 
             var eventHandler = function(element){
@@ -2254,7 +2375,7 @@
 
                 if($reactive.isArray === true){
                     if(isDef(arrayHook))
-                        arrayHook($reactive.val, transmit, static);
+                        arrayHook($reactive.val, transmit, fixed);
                 }else
                     $reactive._update(true, true, transmit);
 
@@ -2265,11 +2386,21 @@
 
             this._addEventListener(vn, $model.event, eventHandler, [], $model.interval);
 
-            var receive = $model.receive;
-            if(isDef(receive) && isDef(static))
-                union = compileReceive(union + receive, static);
+            var trace = this._traceFromVnode(vn);
 
-            this._bind(union, vn, Min.PARALLEX_SRC_PP, $model.union);
+            /**
+             * For optimisation purposes, as simple filters can 
+             * be implemented using the Bind Injection feature.
+             */
+            var filter = $model.filter;
+            if(isFunction(filter))
+                this._bind(union, vn, Min.PARALLEX_SRC_PP, $model.receive, {
+                    filter : filter,
+                    params : [fixed, trace]
+                });
+            else
+                this._bind(union + (isDef(filter) ? filter : ''), 
+                    vn, Min.PARALLEX_SRC_PP, $model.receive);
 
             return true;
 
