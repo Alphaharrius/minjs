@@ -2380,55 +2380,6 @@
 
     }
 
-        function parseInit($init){
-
-            var $att = {};
-            var $pp = {};
-            var $cl = {};
-            var $sl = {};
-            var $di = {};
-
-            for(var key in $init){
-
-                var identity = key[0];
-                var value = $init[key];
-                key = key.slice(1, key.length);
-
-                switch(identity){
-                    case ':': $att[key] = value; break;
-                    case '.': $pp[key] = value; break;
-                    case '+': $cl[key] = value; break;
-                    case '#': $sl[key] = value; break;
-                    case '$': $di[key] = value; break;
-                }
-
-            }
-
-            return {
-                $att : $att,
-                $pp : $pp,
-                $cl : $cl,
-                $sl : $sl,
-                $di : $di
-            }
-
-        }
-
-        function parseBind($parsedInit){
-
-            var $att = $parsedInit.$att;
-            var $pp = $parsedInit.$pp;
-            var $cl = $parsedInit.$cl;
-            var $sl = $parsedInit.$sl;
-
-        }
-
-        M.prototype._el = function(tag, $init, pn){
-
-        }
-
-    }
-
     return Min;
 
 });
