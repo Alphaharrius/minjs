@@ -1,5 +1,5 @@
 /**
- * min.js v0.1.0 Beta Build
+ * min.js v0.1.1 Tester Build
  * (c) 2019 Chan Hing Nin Harry (Alphaharrius)
  * 
  * Features in this version:
@@ -8,7 +8,7 @@
  * - data bounder (REMOVED)
  * - conditional rendering (DONE)
  * - event handler (DONE)
- * - two way data binding (PROTOTYPE)
+ * - two way data binding (DONE)
  * - reactive content
  * 
  * The library header included a require function for 
@@ -28,8 +28,9 @@
  * - Abandoned Autoworker for a new implementation of runtime with IntervalHandler.
  * - Implemented one way data bindings.
  * - Implemented the prototype of two way bindings.
- * - Todo: Implement the Vnode Template Init API.
- * - Todo: Reduce Variable Length and extract helper methods.
+ * - TODO Implement the Vnode Template Init API.
+ * - TODO Reduce Variable Length and extract helper methods.
+ * - TODO Improve the Model System with dynamic function params.
  */
 
 (function(global, factory){ 
@@ -41,7 +42,7 @@
     this.module.exports = undefined; if(imported !== undefined){ console.log('$import', 'From "' + url 
     + '"'); return imported;}else return console.warn('require', 'Unable to located imports...');}else
     return warn('require', 'Unable to import target file...');}, global.Min = factory(global), 
-    global.Min.version = '0.1.0';
+    global.Min.version = '0.1.1';
 })(this, function(){
 
     /**
@@ -253,6 +254,8 @@
     vdomMixin(Min);
     dataBind1Mixin(Min);
     databind2Mixin(Min);
+    templateMixin(Min);
+
 
     /**
      * A Reactive Object defines the value and attributes of
@@ -435,11 +438,6 @@
             reactiveIdx : 0,
 
             /**
-             * This defines the most recent accessed Reactive.
-             */
-            $curReactive : undefined,
-
-            /**
              * This stores the Reactive Objects within current vm.
              */
             $reactives : {},
@@ -587,11 +585,6 @@
                 enumerable : true,
                 configurable : true,
                 get(){
-
-                    /**
-                     * Set the recent Reactive be this.
-                     */
-                    $min.$curReactive = $r;
 
                     if($r.isCompute)
                         $r._update(false, false);
@@ -1258,7 +1251,7 @@
 
         }
 
-        M.prototype._elem = function(tag, $att, $pp, $cl, $sl){
+        M.prototype._createVnode = function(tag, $att, $pp, $cl, $sl){
 
             var $parallex = this.$parallex;
 
@@ -1276,7 +1269,7 @@
 
         }
 
-        M.prototype._text = function(content){
+        M.prototype._createText = function(content){
 
             var $parallex = this.$parallex;
 
@@ -2061,13 +2054,20 @@
         function processBind(str){
 
             var isCompile = false;
+            var withinStr = false;
 
             var trim = '';
             for(var i in str){
 
                 var char = str[i];
-                if(char === ' ' || char === '\t' || char === '\n')
+                if(!withinStr && (char === ' ' || char === '\t' || char === '\n'))
                     continue;
+                
+                if(char === '"')
+                    if(withinStr === false)
+                        withinStr = true;
+                    else
+                        withinStr = false;
 
                 if(isCompile === false)
                     if(isCompileChar(char))
@@ -2396,13 +2396,125 @@
             if(isFunction(filter))
                 this._bind(union, vn, Min.PARALLEX_SRC_PP, $model.receive, {
                     filter : filter,
-                    params : [fixed, trace]
+                    params : [fixed, trace, vn]
                 });
             else
                 this._bind(union + (isDef(filter) ? filter : ''), 
                     vn, Min.PARALLEX_SRC_PP, $model.receive);
 
             return true;
+
+        }
+
+    }
+
+    function templateMixin(M){
+
+        function parseInit($init){
+
+            var $att = {};
+            var $pp = {};
+            var $cl = {};
+            var $sl = {};
+            var $di = {};
+
+            for(var key in $init){
+
+                var identity = key[0];
+                var value = $init[key];
+                key = key.slice(1, key.length);
+
+                switch(identity){
+                    case ':': $att[key] = value; break;
+                    case '.': $pp[key] = value; break;
+                    case '+': $cl[key] = value; break;
+                    case '#': $sl[key] = value; break;
+                    case '$': $di[key] = value; break;
+                }
+
+            }
+
+            return {
+                $att : $att,
+                $pp : $pp,
+                $cl : $cl,
+                $sl : $sl,
+                $di : $di
+            }
+
+        }
+
+        function parseBind($parsedInit){
+
+            var $bind = {
+                $att : {},
+                $pp : {},
+                $cl : {},
+                $sl : {}
+            };
+
+            for(var src in $parsedInit){
+
+                if(src === '$di')
+                    continue;
+
+                var $src = $parsedInit[src];
+                for(var key in $src){
+
+                    var str = $src[key];
+                    var len = str.length;
+                    if(
+                        str[0] === '{' && 
+                        str[1] === '{' && 
+                        str[len - 2] === '}' && 
+                        str[len - 1] === '}'
+                    ){
+                        delete $src[key];
+                        $bind[src][key] = str.slice(2, len - 2);
+                    }
+
+                }
+
+            }
+
+            return $bind;
+
+        }
+
+        function applyBind($min, vn, $bind){
+            for(var src in $bind){
+                var $src = $bind[src];
+                for(var key in $src)
+                    $min._bind($src[key], vn, src, key);
+            }
+        }
+
+        M.prototype.$el = function(tag, $init, pn){
+
+            var $parsedInit = parseInit($init);
+            var $bind = parseBind($parsedInit);
+
+            var vn = this._createVnode(tag, $parsedInit.$att, $parsedInit.$pp, $parsedInit.$cl, $parsedInit.$sl);
+            applyBind(this, vn, $bind);
+
+            var $di = $parsedInit.$di;
+            for(var key in $di){
+                var split = key.split(/([.:])/);
+                var di = split[0];
+                switch(di){
+                    case 'model':
+                        var model = tag + key.slice(5);
+                        if(isDef(M.$databind2.$models[model]))
+                            this._model(model, $di[key], vn);
+                }
+            }
+
+            if(pn === false)
+                return vn;
+            
+            this._pushVnode(vn, pn);
+
+            return vn;
 
         }
 
